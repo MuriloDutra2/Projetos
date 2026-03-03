@@ -5,6 +5,8 @@ import { friendlyError } from '../utils/errorHandler'
 const PLANO_NOMES: Record<string, string> = {
   MENSAL_CARRO: 'Mensal Carro (2h30)',
   MENSAL_MOTO: 'Mensal Moto (2h30)',
+  MENSAL_CARRO_MOTO: 'Mensal Carro e Moto',
+  GARAGEM: 'Garagem',
   FUNCIONARIO: 'Funcionário (Livre)'
 }
 

@@ -5,6 +5,28 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   getTickets: () => ipcRenderer.invoke('get-tickets'),
   getHistory: () => ipcRenderer.invoke('get-history'),
+  getHistoryForDay: (dateStr: string) => ipcRenderer.invoke('get-history-for-day', dateStr),
+  getDailyReport: (dateStr: string) => ipcRenderer.invoke('get-daily-report', dateStr),
+  saveDailyReport: (data: {
+    dateStr: string
+    totalAvulsos: number
+    planosVendidosCount: number
+    planosVendidosValue: number
+    qtyCars: number
+    qtyMotos: number
+  }) => ipcRenderer.invoke('save-daily-report', data),
+  excludeTicket: (data: { id: number; password: string }) =>
+    ipcRenderer.invoke('exclude-ticket', data),
+  getExcludedTickets: () => ipcRenderer.invoke('get-excluded-tickets'),
+  exportDailyReportPdf: (data: {
+    dateStr: string
+    totalAvulsos: number
+    planosVendidosCount: number
+    planosVendidosValue: number
+    qtyCars: number
+    qtyMotos: number
+    savedAt?: string
+  }) => ipcRenderer.invoke('export-daily-report-pdf', data),
   createTicket: (data: { placa: string; tipo: string }) =>
     ipcRenderer.invoke('create-ticket', data),
   checkoutTicket: (data: { id: number }) => ipcRenderer.invoke('checkout-ticket', data),
@@ -15,6 +37,8 @@ const api = {
   }) => ipcRenderer.invoke('calculate-value', data),
   checkPlateSubscription: (placa: string) =>
     ipcRenderer.invoke('check-plate-subscription', placa),
+  checkPlateWasInToday: (placa: string) =>
+    ipcRenderer.invoke('check-plate-was-in-today', placa),
   getClients: () => ipcRenderer.invoke('get-clients'),
   createClient: (data: {
     name: string

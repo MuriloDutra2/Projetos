@@ -1,12 +1,13 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'path'
+import path from 'path'
 import { writeFileSync, existsSync } from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { dbOperations, translateDbError } from './db'
-import { calcularValor } from './calculations'
+import { calcularValor, minutosDaEstadia } from './calculations'
 import { printEntryTicket, printExitTicket, printSubscriptionReceipt } from './printer'
 import { getConfig, saveConfig } from './config'
+
 
 let mainWindow: BrowserWindow | null = null
 
@@ -14,7 +15,7 @@ function createWindow(): void {
   const winIcon =
     process.platform === 'win32'
       ? (() => {
-          const icoPath = join(is.dev ? process.cwd() : app.getAppPath(), 'build', 'icon.ico')
+          const icoPath = path.join(is.dev ? process.cwd() : path.dirname(app.getAppPath()), 'build', 'icon.ico')
           return existsSync(icoPath) ? icoPath : icon
         })()
       : process.platform === 'linux'
@@ -29,7 +30,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     ...(winIcon ? { icon: winIcon } : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false
     }
   })
@@ -48,7 +49,7 @@ function createWindow(): void {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
+    win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 }
 
@@ -105,6 +106,14 @@ app.whenReady().then(() => {
     return 90
   }
 
+  function isAvulsoParaPernoite(tipo: string): boolean {
+    return tipo === 'Carro' || tipo === 'Moto'
+  }
+
+  function usaControleDiario(tipo: string): boolean {
+    return tipo === 'Carro' || tipo === 'Moto' || tipo === 'MENSALISTA'
+  }
+
   ipcMain.handle(
     'checkout-ticket',
     (_event, { id }: { id: number }) => {
@@ -116,11 +125,28 @@ app.whenReady().then(() => {
           return { success: false, error: 'Ticket não encontrado' }
         }
 
-        const freeMinutes = getFreeMinutesForTicket(ticket.placa, ticket.tipo)
-        const valor = calcularValor(ticket.entrada, freeMinutes)
         const saida = new Date().toISOString()
+        const saidaDate = new Date(saida)
+        const dataStr = saidaDate.toISOString().slice(0, 10)
+
+        const freeMinutes = getFreeMinutesForTicket(ticket.placa, ticket.tipo)
+        const dailyUsed = dbOperations.getDailyUsedMinutes(ticket.placa, dataStr)
+        const aplicarPernoite = isAvulsoParaPernoite(ticket.tipo)
+        const valor = calcularValor(
+          ticket.entrada,
+          freeMinutes,
+          saida,
+          dailyUsed,
+          aplicarPernoite
+        )
 
         dbOperations.checkoutTicket(id, valor, saida)
+
+        if (usaControleDiario(ticket.tipo) && freeMinutes < 999999) {
+          const minutos = minutosDaEstadia(ticket.entrada, saida)
+          dbOperations.addDailyUsedMinutes(ticket.placa, dataStr, minutos)
+        }
+
         return { success: true, valor }
       } catch (error) {
         console.error('Erro ao fazer checkout:', error)
@@ -136,11 +162,23 @@ app.whenReady().then(() => {
       data: { entrada: string; placa?: string; tipo?: string }
     ) => {
       try {
+        const tipo = data.tipo ?? 'Carro'
+        const placa = data.placa ?? ''
         const freeMinutes =
-          data.tipo === 'MENSALISTA' && data.placa
-            ? (dbOperations.getVehicleSubscription(normalizePlate(data.placa))?.freeMinutes ?? 90)
+          tipo === 'MENSALISTA' && placa
+            ? (dbOperations.getVehicleSubscription(normalizePlate(placa))?.freeMinutes ?? 90)
             : 90
-        const valor = calcularValor(data.entrada, freeMinutes)
+        const agora = new Date().toISOString()
+        const dataStr = new Date().toISOString().slice(0, 10)
+        const dailyUsed = placa ? dbOperations.getDailyUsedMinutes(placa, dataStr) : 0
+        const aplicarPernoite = tipo === 'Carro' || tipo === 'Moto'
+        const valor = calcularValor(
+          data.entrada,
+          freeMinutes,
+          agora,
+          dailyUsed,
+          aplicarPernoite
+        )
         return { valor }
       } catch (error) {
         console.error('Erro ao calcular valor:', error)
@@ -148,6 +186,16 @@ app.whenReady().then(() => {
       }
     }
   )
+
+  ipcMain.handle('check-plate-was-in-today', (_event, placa: string) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      return dbOperations.getPlateWasInToday(normalizePlate(placa), today)
+    } catch (error) {
+      console.error('Erro ao verificar placa no dia:', error)
+      return false
+    }
+  })
 
   ipcMain.handle('check-plate-subscription', (_event, placa: string) => {
     try {
@@ -332,6 +380,79 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('get-history-for-day', (_event, dateStr: string) => {
+    try {
+      return dbOperations.getHistoryForDay(dateStr)
+    } catch (error) {
+      console.error('Erro ao buscar histórico do dia:', error)
+      return []
+    }
+  })
+
+  ipcMain.handle('get-daily-report', (_event, dateStr: string) => {
+    try {
+      return dbOperations.getDailyReport(dateStr)
+    } catch (error) {
+      console.error('Erro ao buscar relatório do dia:', error)
+      return { totalAvulsos: 0, planosVendidosCount: 0, planosVendidosValue: 0, saved: null }
+    }
+  })
+
+  ipcMain.handle(
+    'save-daily-report',
+    (
+      _event,
+      data: {
+        dateStr: string
+        totalAvulsos: number
+        planosVendidosCount: number
+        planosVendidosValue: number
+        qtyCars: number
+        qtyMotos: number
+      }
+    ) => {
+      try {
+        dbOperations.saveDailyReport(data.dateStr, {
+          totalAvulsos: data.totalAvulsos,
+          planosVendidosCount: data.planosVendidosCount,
+          planosVendidosValue: data.planosVendidosValue,
+          qtyCars: data.qtyCars,
+          qtyMotos: data.qtyMotos
+        })
+        return { success: true }
+      } catch (error) {
+        console.error('Erro ao salvar relatório do dia:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  const EXCLUDE_TICKET_PASSWORD = '2312'
+  ipcMain.handle(
+    'exclude-ticket',
+    (_event, data: { id: number; password: string }): { success: boolean; error?: string } => {
+      try {
+        if (data.password !== EXCLUDE_TICKET_PASSWORD) {
+          return { success: false, error: 'Senha incorreta.' }
+        }
+        dbOperations.excludeTicket(data.id)
+        return { success: true }
+      } catch (error) {
+        console.error('Erro ao excluir ticket:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle('get-excluded-tickets', () => {
+    try {
+      return dbOperations.getExcludedTickets()
+    } catch (error) {
+      console.error('Erro ao buscar veículos excluídos:', error)
+      return []
+    }
+  })
+
   ipcMain.handle('get-printers', async () => {
     try {
       const w = mainWindow ?? BrowserWindow.getAllWindows()[0]
@@ -409,6 +530,88 @@ app.whenReady().then(() => {
         return { success: true }
       } catch (error) {
         console.error('Erro ao imprimir recibo mensalista:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'export-daily-report-pdf',
+    async (
+      _event,
+      data: {
+        dateStr: string
+        totalAvulsos: number
+        planosVendidosCount: number
+        planosVendidosValue: number
+        qtyCars: number
+        qtyMotos: number
+        savedAt?: string
+      }
+    ): Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }> => {
+      try {
+        const [y, m, d] = data.dateStr.split('-')
+        const dateLabel = `${d}/${m}/${y}`
+        const fmt = (v: number) => v.toFixed(2).replace('.', ',')
+        const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 24px; color: #1f2937; }
+    h1 { font-size: 20px; margin-bottom: 8px; }
+    .sub { font-size: 12px; color: #6b7280; margin-bottom: 20px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; }
+    th { background: #f3f4f6; font-weight: 600; }
+    .total { font-weight: 700; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>KF ESTACIONAMENTO – Relatório do dia</h1>
+  <p class="sub">Data: ${dateLabel}</p>
+  <table>
+    <tr><th>Item</th><th>Valor</th></tr>
+    <tr><td>Faturamento avulsos (R$)</td><td>${fmt(data.totalAvulsos)}</td></tr>
+    <tr><td>Planos vendidos (quantidade)</td><td>${data.planosVendidosCount}</td></tr>
+    <tr><td>Valor planos vendidos (R$)</td><td>${fmt(data.planosVendidosValue)}</td></tr>
+    <tr><td>Carros no pátio (salvo)</td><td>${data.qtyCars}</td></tr>
+    <tr><td>Motos no pátio (salvo)</td><td>${data.qtyMotos}</td></tr>
+    <tr class="total"><td>Total recebido no dia (R$)</td><td>${fmt(data.totalAvulsos + data.planosVendidosValue)}</td></tr>
+  </table>
+  ${data.savedAt ? `<p class="sub" style="margin-top: 20px;">Relatório salvo em ${data.savedAt}</p>` : ''}
+</body>
+</html>`
+        const win = new BrowserWindow({
+          width: 800,
+          height: 600,
+          show: false,
+          webPreferences: { nodeIntegration: false }
+        })
+        win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+        await new Promise<void>((resolve, reject) => {
+          win.webContents.once('did-finish-load', () => resolve())
+          win.webContents.once('did-fail-load', (_, code) => reject(new Error('did-fail-load ' + code)))
+        })
+        const pdfBuffer = await win.webContents.printToPDF({
+          printBackground: true,
+          margins: { marginType: 'none' },
+          pageSize: 'A4'
+        })
+        win.close()
+        const defaultName = `Relatorio-${d}-${m}-${y}.pdf`
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow ?? BrowserWindow.getAllWindows()[0] ?? undefined, {
+          defaultPath: defaultName,
+          filters: [{ name: 'PDF', extensions: ['pdf'] }]
+        })
+        if (canceled || !filePath) {
+          return { success: false, canceled: true }
+        }
+        writeFileSync(filePath, pdfBuffer)
+        return { success: true, path: filePath }
+      } catch (error) {
+        console.error('Erro ao exportar PDF do relatório:', error)
         return { success: false, error: String(error) }
       }
     }

@@ -1,9 +1,12 @@
+import { useState } from 'react'
 import { differenceInMinutes } from 'date-fns'
 
 interface ModalCheckoutProps {
   open: boolean
   onClose: () => void
   onConfirm: () => void
+  onExclude?: () => void
+  ticketId?: number
   placa: string
   tipo: string
   entrada: string
@@ -22,16 +25,42 @@ export default function ModalCheckout({
   open,
   onClose,
   onConfirm,
+  onExclude,
+  ticketId,
   placa,
   tipo,
   entrada,
   valor,
   loading = false
 }: ModalCheckoutProps): React.JSX.Element | null {
+  const [showExcludeForm, setShowExcludeForm] = useState(false)
+  const [excludePassword, setExcludePassword] = useState('')
+  const [excludeError, setExcludeError] = useState('')
+  const [excludeLoading, setExcludeLoading] = useState(false)
+
   if (!open) return null
 
   const tempoTotal = differenceInMinutes(new Date(), new Date(entrada))
   const valorFormatado = valor.toFixed(2).replace('.', ',')
+
+  const handleExcludeSubmit = async () => {
+    if (ticketId == null || !onExclude) return
+    setExcludeLoading(true)
+    setExcludeError('')
+    try {
+      const res = await window.api.excludeTicket({ id: ticketId, password: excludePassword })
+      if (res.success) {
+        setShowExcludeForm(false)
+        setExcludePassword('')
+        onExclude()
+        onClose()
+      } else {
+        setExcludeError(res.error ?? 'Senha incorreta.')
+      }
+    } finally {
+      setExcludeLoading(false)
+    }
+  }
 
   return (
     <div
@@ -68,6 +97,38 @@ export default function ModalCheckout({
           </div>
         </div>
 
+        {showExcludeForm && ticketId != null && onExclude ? (
+          <div className="p-6 border-t border-gray-700 bg-gray-900/50 space-y-3">
+            <p className="text-sm text-gray-400">Excluir veículo (sem cobrança). Digite a senha para confirmar:</p>
+            <input
+              type="password"
+              value={excludePassword}
+              onChange={(e) => { setExcludePassword(e.target.value); setExcludeError('') }}
+              placeholder="Senha"
+              className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
+              maxLength={10}
+            />
+            {excludeError && <p className="text-sm text-red-400">{excludeError}</p>}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => { setShowExcludeForm(false); setExcludePassword(''); setExcludeError('') }}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg font-medium"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleExcludeSubmit}
+                disabled={excludeLoading || !excludePassword.trim()}
+                className="px-4 py-2 bg-red-700 hover:bg-red-600 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg font-medium"
+              >
+                {excludeLoading ? 'Excluindo...' : 'Confirmar exclusão'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="p-6 flex gap-3 bg-gray-800/80">
           <button
             type="button"
@@ -95,9 +156,21 @@ export default function ModalCheckout({
                 d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2h2zm-8-12v4m0 0v4m0-4h4m-4 0H9"
               />
             </svg>
-            {loading ? 'Processando...' : 'Confirmar e Imprimir'}
+            {loading ? 'Processando...' : valor > 0 ? 'Confirmar e Imprimir' : 'Apenas confirmar (sem imprimir)'}
           </button>
         </div>
+
+        {!showExcludeForm && ticketId != null && onExclude ? (
+          <div className="px-6 pb-4">
+            <button
+              type="button"
+              onClick={() => setShowExcludeForm(true)}
+              className="text-sm text-gray-500 hover:text-red-400 transition-colors"
+            >
+              Excluir veículo (sem cobrança)
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   )

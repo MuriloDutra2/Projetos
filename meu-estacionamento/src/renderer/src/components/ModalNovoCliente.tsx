@@ -5,6 +5,8 @@ import { friendlyError } from '../utils/errorHandler'
 const PLANOS = [
   { value: 'MENSAL_CARRO', label: 'Mensal Carro (2h30) - R$ 60,00', planName: 'Mensal Carro (2h30)', valor: 60 },
   { value: 'MENSAL_MOTO', label: 'Mensal Moto (2h30) - R$ 45,00', planName: 'Mensal Moto (2h30)', valor: 45 },
+  { value: 'MENSAL_CARRO_MOTO', label: 'Mensal Carro e Moto - R$ 70,00', planName: 'Mensal Carro e Moto', valor: 70 },
+  { value: 'GARAGEM', label: 'Garagem - R$ 180,00', planName: 'Garagem', valor: 180 },
   { value: 'FUNCIONARIO', label: 'Funcionário (Livre) - R$ 50,00', planName: 'Funcionário (Livre)', valor: 50 }
 ] as const
 

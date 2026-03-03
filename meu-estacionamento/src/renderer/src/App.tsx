@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { format, differenceInMinutes, isToday, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns'
+import { useState, useEffect, useCallback } from 'react'
+import { format, differenceInMinutes, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns'
 import { clsx } from 'clsx'
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -22,6 +22,7 @@ import ModalRenovar from './components/ModalRenovar'
 import AlertModal from './components/AlertModal'
 import { maskPlate, plateToRaw } from './utils/masks'
 import { friendlyError } from './utils/errorHandler'
+import { useBarcodeScanner } from './hooks/useBarcodeScanner'
 
 interface Ticket {
   id: number
@@ -61,11 +62,13 @@ interface SubscriptionInfo {
   freeMinutes: number
 }
 
-type View = 'inicio' | 'historico' | 'mensalistas' | 'financeiro' | 'configuracoes'
+type View = 'inicio' | 'historico' | 'relatorio' | 'mensalistas' | 'financeiro' | 'excluidos' | 'configuracoes'
 
 function planLabel(planType: string): string {
-  if (planType === 'MENSAL_CARRO') return 'Mensal Carro'
-  if (planType === 'MENSAL_MOTO') return 'Mensal Moto'
+  if (planType === 'MENSAL_CARRO') return 'Mensal Carro (2h30)'
+  if (planType === 'MENSAL_MOTO') return 'Mensal Moto (2h30)'
+  if (planType === 'MENSAL_CARRO_MOTO') return 'Mensal Carro e Moto'
+  if (planType === 'GARAGEM') return 'Garagem'
   if (planType === 'FUNCIONARIO') return 'Funcionário'
   return planType
 }
@@ -80,6 +83,7 @@ function App(): React.JSX.Element {
   const [loading, setLoading] = useState(false)
   const [view, setView] = useState<View>('inicio')
   const [subscriptionInfo, setSubscriptionInfo] = useState<SubscriptionInfo | null>(null)
+  const [plateWasInToday, setPlateWasInToday] = useState<boolean | null>(null)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [checkoutTicket, setCheckoutTicket] = useState<Ticket | null>(null)
@@ -102,6 +106,17 @@ function App(): React.JSX.Element {
     clientPlates?: string[]
   } | null>(null)
   const [searchMensalistas, setSearchMensalistas] = useState('')
+  const [searchPlacaList, setSearchPlacaList] = useState('')
+  const [historyDay, setHistoryDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [historyForDay, setHistoryForDay] = useState<HistoryEntry[]>([])
+  const [reportDay, setReportDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [dailyReport, setDailyReport] = useState<{
+    totalAvulsos: number
+    planosVendidosCount: number
+    planosVendidosValue: number
+    saved: { qtyCars: number; qtyMotos: number; createdAt: string } | null
+  } | null>(null)
+  const [excludedTickets, setExcludedTickets] = useState<{ id: number; placa: string; tipo: string; entrada: string; saida: string }[]>([])
   const [alertState, setAlertState] = useState<{
     open: boolean
     title: string
@@ -120,7 +135,15 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (view === 'historico') loadHistory()
+    if (view === 'historico') {
+      window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
+    }
+    if (view === 'relatorio') {
+      window.api.getDailyReport(reportDay).then(setDailyReport)
+    }
+    if (view === 'excluidos') {
+      window.api.getExcludedTickets().then(setExcludedTickets)
+    }
     if (view === 'mensalistas') loadClients()
     if (view === 'financeiro') {
       loadHistory()
@@ -130,7 +153,7 @@ function App(): React.JSX.Element {
       window.api.getPrinters().then(setPrinters)
       window.api.getPrinterConfig().then(setSelectedPrinter)
     }
-  }, [view])
+  }, [view, historyDay, reportDay])
 
   useEffect(() => {
     const t = setInterval(() => setTickets((p) => [...p]), 60000)
@@ -205,17 +228,34 @@ function App(): React.JSX.Element {
     const v = plateToRaw(e.target.value)
     setPlaca(v)
     if (v.length < 5) setSubscriptionInfo(null)
+    if (v.length < 7) setPlateWasInToday(null)
   }
 
   const handlePlacaBlur = async () => {
     if (placa.length < 5) return
     try {
-      const info = await window.api.checkPlateSubscription(placa)
+      const [info, wasInToday] = await Promise.all([
+        window.api.checkPlateSubscription(placa),
+        placa.length >= 7 ? window.api.checkPlateWasInToday(placa) : Promise.resolve(false)
+      ])
       setSubscriptionInfo(info)
+      setPlateWasInToday(placa.length >= 7 ? wasInToday : null)
     } catch (e) {
       setSubscriptionInfo(null)
+      setPlateWasInToday(null)
     }
   }
+
+  useEffect(() => {
+    if (placa.length < 7 || view !== 'inicio') {
+      setPlateWasInToday(null)
+      return
+    }
+    const t = setTimeout(() => {
+      window.api.checkPlateWasInToday(placa).then(setPlateWasInToday).catch(() => setPlateWasInToday(null))
+    }, 300)
+    return () => clearTimeout(t)
+  }, [placa, view])
 
   const handleSubmit = (e: React.FormEvent) => {
     handleRegisterEntry(e)
@@ -242,28 +282,31 @@ function App(): React.JSX.Element {
     try {
       const result = await window.api.checkoutTicket({ id: checkoutTicket.id })
       if (result.success) {
-        try {
-          const saida = new Date().toISOString()
-          const minutos = differenceInMinutes(new Date(), new Date(checkoutTicket.entrada))
-          const tempoTotal = minutos < 60 ? `${minutos} min` : `${Math.floor(minutos / 60)}h ${minutos % 60}min`
-          const printRes = await window.electron.ipcRenderer.invoke('print-exit', {
-            placa: checkoutTicket.placa,
-            entrada: checkoutTicket.entrada,
-            saida,
-            valor: checkoutValor,
-            tempoTotal
-          })
-          if (printRes && !printRes.success) {
-            showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+        const valorCobrado = result.valor ?? checkoutValor
+        if (valorCobrado > 0) {
+          try {
+            const saida = new Date().toISOString()
+            const minutos = differenceInMinutes(new Date(), new Date(checkoutTicket.entrada))
+            const tempoTotal = minutos < 60 ? `${minutos} min` : `${Math.floor(minutos / 60)}h ${minutos % 60}min`
+            const printRes = await window.electron.ipcRenderer.invoke('print-exit', {
+              placa: checkoutTicket.placa,
+              entrada: checkoutTicket.entrada,
+              saida,
+              valor: valorCobrado,
+              tempoTotal
+            })
+            if (printRes && !printRes.success) {
+              showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+            }
+          } catch (err) {
+            console.error(err)
+            showAlert('Erro de impressão', friendlyError(err), 'error')
           }
-        } catch (err) {
-          console.error(err)
-          showAlert('Erro de impressão', friendlyError(err), 'error')
         }
         setModalOpen(false)
         setCheckoutTicket(null)
         await loadTickets()
-        if (view === 'historico') await loadHistory()
+        if (view === 'historico') window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
         if (view === 'financeiro') {
           await loadHistory()
           await loadFinancialHistory()
@@ -288,10 +331,6 @@ function App(): React.JSX.Element {
     const m = minutos % 60
     return m > 0 ? `${h}h ${m}min` : `${h}h`
   }
-
-  const historyToday = history.filter((h) => isToday(new Date(h.saida)))
-  const veiculosHoje = historyToday.length
-  const faturamentoHoje = historyToday.reduce((s, h) => s + (h.valor ?? 0), 0)
 
   const filterDate = new Date(financeFilterYear, financeFilterMonth - 1, 1)
   const monthStart = startOfMonth(filterDate)
@@ -346,6 +385,7 @@ function App(): React.JSX.Element {
         if (result.success) {
           setPlaca('')
           setSubscriptionInfo(null)
+          setPlateWasInToday(null)
           try {
             const printRes = await window.electron.ipcRenderer.invoke('print-entry', {
               id: result.id,
@@ -387,6 +427,31 @@ function App(): React.JSX.Element {
     })
     setModalRenovarOpen(true)
   }
+
+  const handleBarcodeScanned = useCallback(
+    (value: string) => {
+      if (view !== 'inicio') return
+      const scanned = plateToRaw(value)
+      if (!scanned) return
+      const ticket = tickets.find(
+        (t) => plateToRaw(t.placa ?? '') === scanned
+      )
+      if (ticket) {
+        void handleCheckoutClick(ticket)
+      } else {
+        showAlert('Placa não encontrada', `Nenhum veículo estacionado com "${maskPlate(scanned)}"`, 'error')
+      }
+    },
+    [view, tickets]
+  )
+
+  useBarcodeScanner(handleBarcodeScanned, view === 'inicio')
+
+  const searchPlacaNorm = plateToRaw(searchPlacaList).toUpperCase()
+  const filteredTickets =
+    searchPlacaNorm.length === 0
+      ? tickets
+      : tickets.filter((t) => (t.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').includes(searchPlacaNorm))
 
   const searchLower = searchMensalistas.trim().toLowerCase()
   const searchDigits = searchLower.replace(/\D/g, '')
@@ -470,6 +535,19 @@ function App(): React.JSX.Element {
         </button>
         <button
           type="button"
+          onClick={() => setView('relatorio')}
+          className={clsx(
+            'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
+            view === 'relatorio' ? 'bg-red-600/80 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+          )}
+          title="Relatório do dia"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.5a2 2 0 012 2v5a2 2 0 01-2 2zm-3-7h.01M17 16h.01" />
+          </svg>
+        </button>
+        <button
+          type="button"
           onClick={() => setView('mensalistas')}
           className={clsx(
             'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
@@ -496,6 +574,19 @@ function App(): React.JSX.Element {
         </button>
         <button
           type="button"
+          onClick={() => setView('excluidos')}
+          className={clsx(
+            'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
+            view === 'excluidos' ? 'bg-red-600/80 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+          )}
+          title="Veículos excluídos"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+        <button
+          type="button"
           onClick={() => setView('configuracoes')}
           className={clsx(
             'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
@@ -513,10 +604,14 @@ function App(): React.JSX.Element {
       {view === 'inicio' && (
         <>
           <div className="w-[30%] min-w-[280px] bg-gray-800 border-r border-gray-700 p-6 flex flex-col">
-            <div className="mb-6 flex justify-center">
-              <img src={logoImg} alt="KF Estacionamento" className="w-32 h-auto max-h-14 object-contain" />
+            <div className="flex items-center gap-4 mb-6">
+              <img
+                src={logoImg}
+                alt="KF Estacionamento"
+                className="w-16 h-auto object-contain drop-shadow-lg flex-shrink-0"
+              />
+              <h1 className="text-2xl font-bold text-white tracking-tight">KF ESTACIONAMENTO</h1>
             </div>
-
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <div>
                 <label htmlFor="placa" className="block text-sm font-medium mb-2 text-gray-300">
@@ -551,10 +646,15 @@ function App(): React.JSX.Element {
                   PLANO VENCIDO EM {format(new Date(subscriptionInfo.expiryDate), 'dd/MM/yyyy')}! Cobrar como avulso?
                 </div>
               )}
+              {plateWasInToday === true && (
+                <div className="p-3 rounded-lg bg-blue-900/40 border border-blue-500 text-blue-200 text-sm">
+                  <strong>Atenção:</strong> Este veículo já esteve no estacionamento hoje. A cobrança será feita normalmente (regra de negócio).
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium mb-2 text-gray-300">Tipo de Veículo</label>
-                <div className="flex gap-2 p-1 bg-gray-700 rounded-lg w-fit">
+                <div className="flex gap-2 p-1 bg-gray-700 rounded-lg w-fit flex-wrap">
                   <label
                     className={clsx(
                       'px-4 py-2 rounded-md cursor-pointer text-sm font-medium transition-all',
@@ -588,22 +688,62 @@ function App(): React.JSX.Element {
             <div className="mt-8 p-4 bg-gray-700 rounded-lg">
               <h2 className="text-sm font-semibold mb-2 text-gray-300">Regras de Cobrança</h2>
               <ul className="text-xs space-y-1 text-gray-400">
-                <li>• 0 a 90 min (avulso): Grátis</li>
-                <li>• Mensalista: 2h30 ou 12h (func.) grátis</li>
+                <li>• 0 a 90 min (avulso): Grátis/dia</li>
+                <li>• Mensalista: 2h30/dia grátis • Garagem: ilimitado</li>
+                <li>• Pernoite (18h-08h): R$ 50,00</li>
                 <li>• Hora extra: R$ 4,00</li>
               </ul>
             </div>
           </div>
 
           <div className="flex-1 p-6 overflow-y-auto">
-            <h2 className="text-xl font-bold mb-4 text-white">Veículos Estacionados</h2>
+            <div className="flex flex-wrap items-center gap-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 flex items-center gap-2">
+                  <span className="text-gray-400 text-sm">Carros</span>
+                  <span className="text-xl font-bold text-white">
+                    {tickets.filter((t) => t.tipo === 'Carro').length}
+                  </span>
+                </div>
+                <div className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 flex items-center gap-2">
+                  <span className="text-gray-400 text-sm">Motos</span>
+                  <span className="text-xl font-bold text-white">
+                    {tickets.filter((t) => t.tipo === 'Moto').length}
+                  </span>
+                </div>
+                {tickets.some((t) => t.tipo === 'MENSALISTA') && (
+                  <div className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 flex items-center gap-2">
+                    <span className="text-gray-400 text-sm">Mensalistas</span>
+                    <span className="text-xl font-bold text-white">
+                      {tickets.filter((t) => t.tipo === 'MENSALISTA').length}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
+                <h2 className="text-xl font-bold text-white sm:mr-2">Veículos Estacionados</h2>
+                <input
+                type="text"
+                value={maskPlate(searchPlacaList)}
+                onChange={(e) => setSearchPlacaList(plateToRaw(e.target.value))}
+                placeholder="Buscar por placa..."
+                className="w-full sm:max-w-xs px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500 uppercase"
+                maxLength={8}
+              />
+              </div>
+            </div>
             {tickets.length === 0 ? (
               <div className="text-center text-gray-400 mt-20">
                 <p className="text-lg">Nenhum veículo estacionado</p>
               </div>
+            ) : filteredTickets.length === 0 ? (
+              <div className="text-center text-gray-400 mt-20">
+                <p className="text-lg">Nenhum veículo encontrado com a placa &quot;{maskPlate(searchPlacaList) || '—'}&quot;</p>
+                <p className="text-sm mt-2">Digite outra placa ou limpe a busca para ver todos.</p>
+              </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {tickets.map((ticket) => {
+                {filteredTickets.map((ticket) => {
                   const tempoDecorrido = calcularTempoDecorrido(ticket.entrada)
                   const freeMin = ticket.tipo === 'MENSALISTA' ? 150 : 90
                   const isAlerta = tempoDecorrido > freeMin
@@ -654,15 +794,25 @@ function App(): React.JSX.Element {
 
       {view === 'historico' && (
         <div className="flex-1 p-6 overflow-y-auto">
-          <h2 className="text-xl font-bold mb-6 text-white">Histórico e Faturamento</h2>
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <h2 className="text-xl font-bold text-white">Histórico do dia</h2>
+            <input
+              type="date"
+              value={historyDay}
+              onChange={(e) => setHistoryDay(e.target.value)}
+              className="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
             <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Veículos Hoje</p>
-              <p className="text-2xl font-bold text-white">{veiculosHoje}</p>
+              <p className="text-sm text-gray-400">Veículos no dia ({format(new Date(historyDay + 'T12:00:00'), 'dd/MM/yyyy')})</p>
+              <p className="text-2xl font-bold text-white">{historyForDay.length}</p>
             </div>
             <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Faturamento Hoje (R$)</p>
-              <p className="text-2xl font-bold text-green-500">{faturamentoHoje.toFixed(2).replace('.', ',')}</p>
+              <p className="text-sm text-gray-400">Faturamento do dia (R$)</p>
+              <p className="text-2xl font-bold text-green-500">
+                {historyForDay.reduce((s, h) => s + (h.valor ?? 0), 0).toFixed(2).replace('.', ',')}
+              </p>
             </div>
           </div>
           <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
@@ -677,12 +827,12 @@ function App(): React.JSX.Element {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.length === 0 ? (
+                  {historyForDay.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhum registro finalizado</td>
+                      <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhum registro finalizado neste dia</td>
                     </tr>
                   ) : (
-                    history.map((h) => (
+                    historyForDay.map((h) => (
                       <tr key={h.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                         <td className="px-4 py-3 font-medium text-white">{h.placa}</td>
                         <td className="px-4 py-3 text-gray-300">{format(new Date(h.entrada), 'dd/MM HH:mm')}</td>
@@ -697,6 +847,113 @@ function App(): React.JSX.Element {
               </table>
             </div>
           </div>
+        </div>
+      )}
+
+      {view === 'relatorio' && (
+        <div className="flex-1 p-6 overflow-y-auto">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <h2 className="text-xl font-bold text-white">Relatório do dia</h2>
+            <input
+              type="date"
+              value={reportDay}
+              onChange={(e) => setReportDay(e.target.value)}
+              className="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+            />
+          </div>
+          {dailyReport && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                  <p className="text-sm text-gray-400">Faturamento avulsos (R$)</p>
+                  <p className="text-2xl font-bold text-white">
+                    {dailyReport.totalAvulsos.toFixed(2).replace('.', ',')}
+                  </p>
+                </div>
+                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                  <p className="text-sm text-gray-400">Planos vendidos (qtd)</p>
+                  <p className="text-2xl font-bold text-white">{dailyReport.planosVendidosCount}</p>
+                </div>
+                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                  <p className="text-sm text-gray-400">Valor planos vendidos (R$)</p>
+                  <p className="text-2xl font-bold text-green-500">
+                    {dailyReport.planosVendidosValue.toFixed(2).replace('.', ',')}
+                  </p>
+                </div>
+                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                  <p className="text-sm text-gray-400">Carros / Motos no pátio (salvo)</p>
+                  <p className="text-lg font-bold text-white">
+                    {dailyReport.saved
+                      ? `${dailyReport.saved.qtyCars} / ${dailyReport.saved.qtyMotos}`
+                      : '—'}
+                  </p>
+                  {dailyReport.saved && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Salvo em {format(new Date(dailyReport.saved.createdAt), 'dd/MM/yyyy HH:mm')}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const report = await window.api.getDailyReport(reportDay)
+                    const qtyCars = tickets.filter((t) => t.tipo === 'Carro').length
+                    const qtyMotos = tickets.filter((t) => t.tipo === 'Moto').length
+                    const res = await window.api.saveDailyReport({
+                      dateStr: reportDay,
+                      totalAvulsos: report.totalAvulsos,
+                      planosVendidosCount: report.planosVendidosCount,
+                      planosVendidosValue: report.planosVendidosValue,
+                      qtyCars,
+                      qtyMotos
+                    })
+                    if (res.success) {
+                      showAlert('Salvo', 'Relatório do dia salvo com sucesso.', 'success')
+                      window.api.getDailyReport(reportDay).then(setDailyReport)
+                    } else {
+                      showAlert('Erro', friendlyError(res.error ?? 'Erro ao salvar'), 'error')
+                    }
+                  }}
+                  disabled={reportDay !== format(new Date(), 'yyyy-MM-dd')}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg font-medium text-white"
+                >
+                  Salvar relatório do dia
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!dailyReport) return
+                    const res = await window.api.exportDailyReportPdf({
+                      dateStr: reportDay,
+                      totalAvulsos: dailyReport.totalAvulsos,
+                      planosVendidosCount: dailyReport.planosVendidosCount,
+                      planosVendidosValue: dailyReport.planosVendidosValue,
+                      qtyCars: dailyReport.saved?.qtyCars ?? 0,
+                      qtyMotos: dailyReport.saved?.qtyMotos ?? 0,
+                      savedAt: dailyReport.saved
+                        ? format(new Date(dailyReport.saved.createdAt), 'dd/MM/yyyy HH:mm')
+                        : undefined
+                    })
+                    if (res.success && res.path) {
+                      showAlert('PDF exportado', `Arquivo salvo em ${res.path}`, 'success')
+                    } else if (!res.canceled && res.error) {
+                      showAlert('Erro', friendlyError(res.error), 'error')
+                    }
+                  }}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white"
+                >
+                  Baixar PDF
+                </button>
+              </div>
+              <p className="text-sm text-gray-500 mt-2">
+                {reportDay === format(new Date(), 'yyyy-MM-dd')
+                  ? 'Ao salvar, são gravados o faturamento de avulsos e planos do dia e a quantidade atual de carros e motos no pátio.'
+                  : 'Salvar está disponível apenas para o dia de hoje (a quantidade de carros/motos no pátio é do momento do salvamento).'}
+              </p>
+            </>
+          )}
         </div>
       )}
 
@@ -918,6 +1175,43 @@ function App(): React.JSX.Element {
         </div>
       )}
 
+      {view === 'excluidos' && (
+        <div className="flex-1 p-6 overflow-y-auto">
+          <h2 className="text-xl font-bold mb-6 text-white">Veículos excluídos</h2>
+          <p className="text-sm text-gray-400 mb-4">Lista de veículos removidos sem cobrança (exclusão mediante senha no modal de saída).</p>
+          <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-gray-700 bg-gray-700/50">
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Placa</th>
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Tipo</th>
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Entrada</th>
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Data exclusão</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {excludedTickets.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhum veículo excluído</td>
+                    </tr>
+                  ) : (
+                    excludedTickets.map((t) => (
+                      <tr key={t.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                        <td className="px-4 py-3 font-medium text-white">{t.placa}</td>
+                        <td className="px-4 py-3 text-gray-300">{t.tipo}</td>
+                        <td className="px-4 py-3 text-gray-300">{format(new Date(t.entrada), 'dd/MM/yyyy HH:mm')}</td>
+                        <td className="px-4 py-3 text-gray-300">{t.saida ? format(new Date(t.saida), 'dd/MM/yyyy HH:mm') : '—'}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {view === 'configuracoes' && (
         <div className="flex-1 p-6 overflow-y-auto">
           <h2 className="text-xl font-bold mb-6 text-white">Configurações</h2>
@@ -961,6 +1255,11 @@ function App(): React.JSX.Element {
           }
         }}
         onConfirm={handleCheckoutConfirm}
+        onExclude={async () => {
+          await loadTickets()
+          if (view === 'excluidos') window.api.getExcludedTickets().then(setExcludedTickets)
+        }}
+        ticketId={checkoutTicket?.id}
         placa={checkoutTicket?.placa ?? ''}
         tipo={checkoutTicket?.tipo ?? ''}
         entrada={checkoutTicket?.entrada ?? ''}

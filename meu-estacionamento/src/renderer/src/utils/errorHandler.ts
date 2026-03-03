@@ -12,8 +12,8 @@ export function friendlyError(error: unknown): string {
     return 'Não foi possível concluir a operação. Tente novamente.'
   }
 
-  if (lower.includes('timedout') || lower.includes('timeout') || lower.includes('printer') || lower.includes('print')) {
-    return 'A impressora não respondeu. Verifique se ela está ligada e o cabo USB conectado.'
+  if (lower.includes('printtimeout') || lower.includes('timedout') || lower.includes('timeout') || lower.includes('printer') || lower.includes('print')) {
+    return 'A impressora não respondeu. Verifique se está ligada, o cabo USB e a fila de impressão do Windows.'
   }
   if (lower.includes('constraint') || lower.includes('unique') || lower.includes('duplicate')) {
     return 'Já existe um veículo com esta placa no sistema.'

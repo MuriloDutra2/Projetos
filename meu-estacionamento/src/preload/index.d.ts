@@ -6,6 +6,32 @@ declare global {
     api: {
       getTickets: () => Promise<any[]>
       getHistory: () => Promise<any[]>
+      getHistoryForDay: (dateStr: string) => Promise<any[]>
+      getDailyReport: (dateStr: string) => Promise<{
+        totalAvulsos: number
+        planosVendidosCount: number
+        planosVendidosValue: number
+        saved: { qtyCars: number; qtyMotos: number; createdAt: string } | null
+      }>
+      saveDailyReport: (data: {
+        dateStr: string
+        totalAvulsos: number
+        planosVendidosCount: number
+        planosVendidosValue: number
+        qtyCars: number
+        qtyMotos: number
+      }) => Promise<{ success: boolean; error?: string }>
+      excludeTicket: (data: { id: number; password: string }) => Promise<{ success: boolean; error?: string }>
+      getExcludedTickets: () => Promise<{ id: number; placa: string; tipo: string; entrada: string; saida: string }[]>
+      exportDailyReportPdf: (data: {
+        dateStr: string
+        totalAvulsos: number
+        planosVendidosCount: number
+        planosVendidosValue: number
+        qtyCars: number
+        qtyMotos: number
+        savedAt?: string
+      }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
       createTicket: (data: { placa: string; tipo: string }) => Promise<{ success: boolean; id?: number; entrada?: string; error?: string; message?: string }>
       checkoutTicket: (data: { id: number }) => Promise<{ success: boolean; valor?: number; error?: string }>
       calculateValue: (data: { entrada: string; placa?: string; tipo?: string }) => Promise<{ valor: number }>
@@ -17,6 +43,7 @@ declare global {
         expiryDate: string
         freeMinutes: number
       }>
+      checkPlateWasInToday: (placa: string) => Promise<boolean>
       getClients: () => Promise<any[]>
       createClient: (data: { name: string; cpf: string; phone: string; plan_type: string; expiry_date: string; plates: string[] }) => Promise<{ success: boolean; id?: number; error?: string }>
       updateClient: (data: { id: number; name: string; cpf: string; phone: string; plan_type: string; expiry_date: string; plates: string[] }) => Promise<{ success: boolean; error?: string }>

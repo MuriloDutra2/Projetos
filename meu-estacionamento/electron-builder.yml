@@ -11,9 +11,20 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+# Inclui icon.ico na pasta resources do app instalado (para a janela usar em runtime)
+extraResources:
+  - from: build/icon.ico
+    to: build/icon.ico
+  - from: resources/logo.png
+    to: resources/logo.png
 win:
   executableName: meu-estacionamento
+  icon: build/icon.ico
+  # Evita uso do winCodeSign (que exige privilégio de link simbólico no Windows)
+  signAndEditExecutable: false
 nsis:
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
