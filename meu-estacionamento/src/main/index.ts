@@ -89,9 +89,11 @@ app.whenReady().then(() => {
       if (dbOperations.hasActiveTicket(placaNorm)) {
         return { success: false, message: 'Veículo já está no pátio!' }
       }
+      const sub = dbOperations.getVehicleSubscription(placaNorm)
+      const isMensalistaDebtor = !!(sub?.isDebtor && sub?.planType?.startsWith('MENSAL'))
       const entrada = new Date().toISOString()
       const id = dbOperations.createTicket(placaNorm, tipo, entrada)
-      return { success: true, id, entrada }
+      return { success: true, id, entrada, billedAsAvulso: isMensalistaDebtor }
     } catch (error) {
       console.error('Erro ao criar ticket:', error)
       return { success: false, error: String(error) }
@@ -203,30 +205,36 @@ app.whenReady().then(() => {
       if (!sub) {
         return {
           isSubscriber: false,
+          clientId: undefined,
           clientName: '',
           planType: '',
           isExpired: false,
           expiryDate: '',
-          freeMinutes: 90
+          freeMinutes: 90,
+          isDebtor: false
         }
       }
       return {
         isSubscriber: true,
+        clientId: sub.clientId,
         clientName: sub.clientName,
         planType: sub.planType,
         isExpired: sub.isExpired,
         expiryDate: sub.expiryDate,
-        freeMinutes: sub.freeMinutes
+        freeMinutes: sub.freeMinutes,
+        isDebtor: !!sub.isDebtor
       }
     } catch (error) {
       console.error('Erro ao verificar placa:', error)
       return {
         isSubscriber: false,
+        clientId: undefined,
         clientName: '',
         planType: '',
         isExpired: false,
         expiryDate: '',
-        freeMinutes: 90
+        freeMinutes: 90,
+        isDebtor: false
       }
     }
   })
@@ -259,7 +267,7 @@ app.whenReady().then(() => {
       return dbOperations.getClients()
     } catch (error) {
       console.error('Erro ao buscar clientes:', error)
-      return []
+      throw error
     }
   })
 
@@ -304,14 +312,24 @@ app.whenReady().then(() => {
     'renew-subscription',
     (
       _event,
-      data: { clientId: number; planType: string; amount: number }
+      data: {
+        clientId: number
+        planType: string
+        amount: number
+        months?: number
+        paymentMethod?: string
+        notes?: string
+      }
     ) => {
       try {
-        const newExpiry = dbOperations.renewSubscription(
-          data.clientId,
-          data.planType,
-          data.amount
-        )
+        const newExpiry = dbOperations.renewSubscriptionAdvanced({
+          clientId: data.clientId,
+          planType: data.planType,
+          amount: data.amount,
+          months: data.months ?? 1,
+          paymentMethod: data.paymentMethod ?? 'Não informado',
+          notes: data.notes ?? ''
+        })
         return { success: true, newExpiry }
       } catch (error) {
         console.error('Erro ao renovar:', error)
@@ -326,6 +344,27 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('Erro ao buscar histórico financeiro:', error)
       return []
+    }
+  })
+
+  ipcMain.handle(
+    'get-financial-summary-by-method',
+    (_event, data: { month: number; year: number }) => {
+      try {
+        return dbOperations.getFinancialSummaryByMethod(data.month, data.year)
+      } catch (error) {
+        console.error('Erro ao buscar resumo por método:', error)
+        return []
+      }
+    }
+  )
+
+  ipcMain.handle('get-client-statement', (_event, clientId: number) => {
+    try {
+      return dbOperations.getClientStatement(clientId)
+    } catch (error) {
+      console.error('Erro ao buscar extrato do cliente:', error)
+      return null
     }
   })
 
@@ -346,7 +385,7 @@ app.whenReady().then(() => {
         rows.push({
           date: p.payment_date,
           type: 'Renovação',
-          description: p.client_name ?? '',
+          description: `${p.client_name ?? ''}${p.payment_method ? ` - ${p.payment_method}` : ''}${p.competency_month ? ` - Comp ${p.competency_month}` : ''}`,
           value: p.amount ?? 0
         })
       })
@@ -389,6 +428,15 @@ app.whenReady().then(() => {
     }
   })
 
+  ipcMain.handle('get-history-last24h', () => {
+    try {
+      return dbOperations.getHistoryLast24h()
+    } catch (error) {
+      console.error('Erro ao buscar histórico últimas 24h:', error)
+      return []
+    }
+  })
+
   ipcMain.handle('get-daily-report', (_event, dateStr: string) => {
     try {
       return dbOperations.getDailyReport(dateStr)
@@ -427,7 +475,8 @@ app.whenReady().then(() => {
     }
   )
 
-  const EXCLUDE_TICKET_PASSWORD = '2312'
+  const EXCLUDE_TICKET_PASSWORD = 'Kefit2026'
+  const EXCLUDE_ALL_PASSWORD = 'murilo123@'
   ipcMain.handle(
     'exclude-ticket',
     (_event, data: { id: number; password: string }): { success: boolean; error?: string } => {
@@ -439,6 +488,22 @@ app.whenReady().then(() => {
         return { success: true }
       } catch (error) {
         console.error('Erro ao excluir ticket:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'exclude-all-active-tickets',
+    (_event, data: { password: string }): { success: boolean; error?: string } => {
+      try {
+        if (data.password !== EXCLUDE_ALL_PASSWORD) {
+          return { success: false, error: 'Senha incorreta.' }
+        }
+        dbOperations.excludeAllActiveTickets()
+        return { success: true }
+      } catch (error) {
+        console.error('Erro ao excluir todos os tickets:', error)
         return { success: false, error: String(error) }
       }
     }

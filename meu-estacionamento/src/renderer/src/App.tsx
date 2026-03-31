@@ -51,6 +51,10 @@ interface ClientRow {
   status: string
   plates: string[]
   isExpired: boolean
+  isDebtor?: boolean
+  lastPaymentDate?: string | null
+  lastPaymentCompetency?: string | null
+  financialStatus?: 'Em dia' | 'Vence hoje' | 'A vencer' | 'Em atraso' | string
 }
 
 interface SubscriptionInfo {
@@ -60,6 +64,22 @@ interface SubscriptionInfo {
   isExpired: boolean
   expiryDate: string
   freeMinutes: number
+  isDebtor?: boolean
+  clientId?: number
+}
+
+interface ClientStatement {
+  client: { id: number; name: string; plan_type: string }
+  payments: {
+    id: number
+    amount: number
+    payment_date: string
+    payment_method: string
+    competency_month?: string | null
+    is_advance: number
+  }[]
+  avulsoWhileDebtor: { id: number; placa: string; saida: string; valor: number }[]
+  totals: { payments: number; avulsos: number }
 }
 
 type View = 'inicio' | 'historico' | 'relatorio' | 'mensalistas' | 'financeiro' | 'excluidos' | 'configuracoes'
@@ -74,12 +94,19 @@ function planLabel(planType: string): string {
 }
 
 function App(): React.JSX.Element {
+  const competenciaLabel = (competency?: string | null) => {
+    if (!competency) return '—'
+    const [y, m] = competency.split('-')
+    return `${m}/${y}`
+  }
+
   const [placa, setPlaca] = useState('')
   const [tipo, setTipo] = useState<'Carro' | 'Moto'>('Carro')
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [clients, setClients] = useState<ClientRow[]>([])
   const [financialHistory, setFinancialHistory] = useState<any[]>([])
+  const [financialByMethod, setFinancialByMethod] = useState<{ payment_method: string; total: number }[]>([])
   const [loading, setLoading] = useState(false)
   const [view, setView] = useState<View>('inicio')
   const [subscriptionInfo, setSubscriptionInfo] = useState<SubscriptionInfo | null>(null)
@@ -109,6 +136,9 @@ function App(): React.JSX.Element {
   const [searchPlacaList, setSearchPlacaList] = useState('')
   const [historyDay, setHistoryDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [historyForDay, setHistoryForDay] = useState<HistoryEntry[]>([])
+  const [historyLast24h, setHistoryLast24h] = useState<HistoryEntry[]>([])
+  const [historicoFiltro24h, setHistoricoFiltro24h] = useState(false)
+  const [searchHistoricoPlaca, setSearchHistoricoPlaca] = useState('')
   const [reportDay, setReportDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const [dailyReport, setDailyReport] = useState<{
     totalAvulsos: number
@@ -129,6 +159,14 @@ function App(): React.JSX.Element {
     message: string
     onConfirm: () => void
   }>({ open: false, title: '', message: '', onConfirm: () => {} })
+  const [modalExcluirTodosOpen, setModalExcluirTodosOpen] = useState(false)
+  const [excluirTodosPassword, setExcluirTodosPassword] = useState('')
+  const [excluirTodosLoading, setExcluirTodosLoading] = useState(false)
+  const [excluirTodosError, setExcluirTodosError] = useState('')
+  const [debtorDecisionOpen, setDebtorDecisionOpen] = useState(false)
+  const [pendingEntry, setPendingEntry] = useState<{ plate: string; info: SubscriptionInfo } | null>(null)
+  const [statementOpen, setStatementOpen] = useState(false)
+  const [statementData, setStatementData] = useState<ClientStatement | null>(null)
 
   useEffect(() => {
     loadTickets()
@@ -136,7 +174,11 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     if (view === 'historico') {
-      window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
+      if (historicoFiltro24h) {
+        window.api.getHistoryLast24h().then(setHistoryLast24h)
+      } else {
+        window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
+      }
     }
     if (view === 'relatorio') {
       window.api.getDailyReport(reportDay).then(setDailyReport)
@@ -148,12 +190,15 @@ function App(): React.JSX.Element {
     if (view === 'financeiro') {
       loadHistory()
       loadFinancialHistory()
+      window.api
+        .getFinancialSummaryByMethod({ month: financeFilterMonth, year: financeFilterYear })
+        .then(setFinancialByMethod)
     }
     if (view === 'configuracoes') {
       window.api.getPrinters().then(setPrinters)
       window.api.getPrinterConfig().then(setSelectedPrinter)
     }
-  }, [view, historyDay, reportDay])
+  }, [view, historyDay, reportDay, historicoFiltro24h, financeFilterMonth, financeFilterYear])
 
   useEffect(() => {
     const t = setInterval(() => setTickets((p) => [...p]), 60000)
@@ -212,6 +257,8 @@ function App(): React.JSX.Element {
       setClients(data)
     } catch (e) {
       console.error(e)
+      setClients([])
+      showAlert('Erro', 'Erro ao carregar mensalistas. Tente novamente.', 'error')
     }
   }
 
@@ -306,7 +353,10 @@ function App(): React.JSX.Element {
         setModalOpen(false)
         setCheckoutTicket(null)
         await loadTickets()
-        if (view === 'historico') window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
+        if (view === 'historico') {
+          if (historicoFiltro24h) window.api.getHistoryLast24h().then(setHistoryLast24h)
+          else window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
+        }
         if (view === 'financeiro') {
           await loadHistory()
           await loadFinancialHistory()
@@ -355,7 +405,7 @@ function App(): React.JSX.Element {
     ...financialHistory.map((p) => ({
       date: p.payment_date,
       type: 'renovacao' as const,
-      description: `Renovação - ${p.client_name}`,
+      description: `Renovação - ${p.client_name}${p.payment_method ? ` (${p.payment_method})` : ''}`,
       value: p.amount ?? 0
     }))
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -368,45 +418,60 @@ function App(): React.JSX.Element {
     setAlertState({ open: true, title, message, type })
   }
 
+  const registerEntryWithType = async (plate: string, typeToSave: string) => {
+    const result = await window.api.createTicket({
+      placa: plate.toUpperCase(),
+      tipo: typeToSave
+    })
+    if (result.success) {
+      setPlaca('')
+      setSubscriptionInfo(null)
+      setPlateWasInToday(null)
+      try {
+        const printRes = await window.electron.ipcRenderer.invoke('print-entry', {
+          id: result.id,
+          placa: plate.toUpperCase(),
+          entrada: result.entrada ?? new Date().toISOString()
+        })
+        if (printRes && !printRes.success) {
+          showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+        }
+      } catch (err) {
+        console.error(err)
+        showAlert('Erro de impressão', friendlyError(err), 'error')
+      }
+      await loadTickets()
+      return
+    }
+    const msg = result.message || friendlyError(result.error) || 'Não foi possível registrar. Tente novamente.'
+    showAlert(result.message ? 'Atenção' : 'Erro', msg, 'error')
+    if (result.message !== 'Veículo já está no pátio!') {
+      setPlaca('')
+    }
+  }
+
   const handleRegisterEntry = (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (!placa.trim()) return
-    const tipoToSave =
-      subscriptionInfo?.isSubscriber && !subscriptionInfo?.isExpired
-        ? 'MENSALISTA'
-        : tipo
     setLoading(true)
     ;(async () => {
       try {
-        const result = await window.api.createTicket({
-          placa: placa.toUpperCase(),
-          tipo: tipoToSave
-        })
-        if (result.success) {
-          setPlaca('')
-          setSubscriptionInfo(null)
-          setPlateWasInToday(null)
-          try {
-            const printRes = await window.electron.ipcRenderer.invoke('print-entry', {
-              id: result.id,
-              placa: placa.toUpperCase(),
-              entrada: result.entrada ?? new Date().toISOString()
-            })
-            if (printRes && !printRes.success) {
-              showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+        let tipoToSave: string = tipo
+        if (plateToRaw(placa).length >= 7) {
+          const info = await window.api.checkPlateSubscription(placa)
+          if (info?.isSubscriber && !info?.isExpired) {
+            if (info?.isDebtor && info?.planType?.startsWith('MENSAL')) {
+              setPendingEntry({ plate: placa, info })
+              setDebtorDecisionOpen(true)
+              setLoading(false)
+              return
+            } else {
+              tipoToSave = 'MENSALISTA'
             }
-          } catch (err) {
-            console.error(err)
-            showAlert('Erro de impressão', friendlyError(err), 'error')
           }
-          await loadTickets()
-        } else {
-          const msg = result.message || friendlyError(result.error) || 'Não foi possível registrar. Tente novamente.'
-          showAlert(result.message ? 'Atenção' : 'Erro', msg, 'error')
-          if (result.message !== 'Veículo já está no pátio!') {
-            setPlaca('')
-          }
+          setSubscriptionInfo(info)
         }
+        await registerEntryWithType(placa, tipoToSave)
       } catch (err) {
         console.error(err)
         showAlert('Erro', friendlyError(err), 'error')
@@ -437,6 +502,8 @@ function App(): React.JSX.Element {
         (t) => plateToRaw(t.placa ?? '') === scanned
       )
       if (ticket) {
+        setPlaca('')
+        setSearchPlacaList('')
         void handleCheckoutClick(ticket)
       } else {
         showAlert('Placa não encontrada', `Nenhum veículo estacionado com "${maskPlate(scanned)}"`, 'error')
@@ -641,6 +708,11 @@ function App(): React.JSX.Element {
                   MENSALISTA DETECTADO: {subscriptionInfo.clientName} — Até {subscriptionInfo.freeMinutes} min grátis
                 </div>
               )}
+              {subscriptionInfo?.isSubscriber && !subscriptionInfo?.isExpired && subscriptionInfo?.isDebtor && subscriptionInfo?.planType?.startsWith('MENSAL') && (
+                <div className="p-3 rounded-lg bg-red-900/40 border border-red-600 text-red-200 text-sm">
+                  <strong>Saldo devedor:</strong> este mensalista será cobrado como avulso até o pagamento da mensalidade.
+                </div>
+              )}
               {subscriptionInfo?.isSubscriber && subscriptionInfo?.isExpired && (
                 <div className="p-3 rounded-lg bg-amber-900/40 border border-amber-600 text-amber-200 text-sm">
                   PLANO VENCIDO EM {format(new Date(subscriptionInfo.expiryDate), 'dd/MM/yyyy')}! Cobrar como avulso?
@@ -690,6 +762,7 @@ function App(): React.JSX.Element {
               <ul className="text-xs space-y-1 text-gray-400">
                 <li>• 0 a 90 min (avulso): Grátis/dia</li>
                 <li>• Mensalista: 2h30/dia grátis • Garagem: ilimitado</li>
+                <li>• Mensalistas vencem todo dia 10</li>
                 <li>• Pernoite (18h-08h): R$ 50,00</li>
                 <li>• Hora extra: R$ 4,00</li>
               </ul>
@@ -720,16 +793,27 @@ function App(): React.JSX.Element {
                   </div>
                 )}
               </div>
-              <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
+              <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 flex-wrap">
                 <h2 className="text-xl font-bold text-white sm:mr-2">Veículos Estacionados</h2>
                 <input
-                type="text"
-                value={maskPlate(searchPlacaList)}
-                onChange={(e) => setSearchPlacaList(plateToRaw(e.target.value))}
-                placeholder="Buscar por placa..."
-                className="w-full sm:max-w-xs px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500 uppercase"
-                maxLength={8}
-              />
+                  type="text"
+                  value={maskPlate(searchPlacaList)}
+                  onChange={(e) => setSearchPlacaList(plateToRaw(e.target.value))}
+                  placeholder="Buscar por placa..."
+                  className="w-full sm:max-w-xs px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500 uppercase"
+                  maxLength={8}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExcluirTodosPassword('')
+                    setExcluirTodosError('')
+                    setModalExcluirTodosOpen(true)
+                  }}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 font-medium"
+                >
+                  Excluir todos do pátio
+                </button>
               </div>
             </div>
             {tickets.length === 0 ? (
@@ -792,63 +876,106 @@ function App(): React.JSX.Element {
         </>
       )}
 
-      {view === 'historico' && (
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-            <h2 className="text-xl font-bold text-white">Histórico do dia</h2>
-            <input
-              type="date"
-              value={historyDay}
-              onChange={(e) => setHistoryDay(e.target.value)}
-              className="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500"
-            />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Veículos no dia ({format(new Date(historyDay + 'T12:00:00'), 'dd/MM/yyyy')})</p>
-              <p className="text-2xl font-bold text-white">{historyForDay.length}</p>
+      {view === 'historico' && (() => {
+        const historyBaseList = historicoFiltro24h ? historyLast24h : historyForDay
+        const searchHistoricoNorm = plateToRaw(searchHistoricoPlaca).toUpperCase()
+        const historyFilteredList =
+          searchHistoricoNorm.length === 0
+            ? historyBaseList
+            : historyBaseList.filter((h) =>
+                (h.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').includes(searchHistoricoNorm)
+              )
+        return (
+          <div className="flex-1 p-6 overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+              <h2 className="text-xl font-bold text-white">
+                {historicoFiltro24h ? 'Últimas 24 horas' : 'Histórico do dia'}
+              </h2>
+              <div className="flex flex-wrap items-center gap-3">
+                {!historicoFiltro24h && (
+                  <input
+                    type="date"
+                    value={historyDay}
+                    onChange={(e) => setHistoryDay(e.target.value)}
+                    className="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => setHistoricoFiltro24h((v) => !v)}
+                  className={clsx(
+                    'px-4 py-2 rounded-lg font-medium transition',
+                    historicoFiltro24h
+                      ? 'bg-red-600 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  )}
+                >
+                  Últimas 24h
+                </button>
+              </div>
             </div>
-            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Faturamento do dia (R$)</p>
-              <p className="text-2xl font-bold text-green-500">
-                {historyForDay.reduce((s, h) => s + (h.valor ?? 0), 0).toFixed(2).replace('.', ',')}
-              </p>
+            <div className="mb-4">
+              <input
+                type="text"
+                value={searchHistoricoPlaca}
+                onChange={(e) => setSearchHistoricoPlaca(plateToRaw(e.target.value))}
+                placeholder="Buscar por placa..."
+                className="w-full max-w-xs px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
+              />
             </div>
-          </div>
-          <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-gray-700 bg-gray-700/50">
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Placa</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Entrada</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Saída</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300 text-right">Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {historyForDay.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhum registro finalizado neste dia</td>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+              <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                <p className="text-sm text-gray-400">
+                  {historicoFiltro24h ? 'Veículos (últimas 24h)' : `Veículos no dia (${format(new Date(historyDay + 'T12:00:00'), 'dd/MM/yyyy')})`}
+                </p>
+                <p className="text-2xl font-bold text-white">{historyFilteredList.length}</p>
+              </div>
+              <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
+                <p className="text-sm text-gray-400">Faturamento (R$)</p>
+                <p className="text-2xl font-bold text-green-500">
+                  {historyFilteredList.reduce((s, h) => s + (h.valor ?? 0), 0).toFixed(2).replace('.', ',')}
+                </p>
+              </div>
+            </div>
+            <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-gray-700 bg-gray-700/50">
+                      <th className="px-4 py-3 text-sm font-semibold text-gray-300">Placa</th>
+                      <th className="px-4 py-3 text-sm font-semibold text-gray-300">Entrada</th>
+                      <th className="px-4 py-3 text-sm font-semibold text-gray-300">Saída</th>
+                      <th className="px-4 py-3 text-sm font-semibold text-gray-300 text-right">Valor</th>
                     </tr>
-                  ) : (
-                    historyForDay.map((h) => (
-                      <tr key={h.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                        <td className="px-4 py-3 font-medium text-white">{h.placa}</td>
-                        <td className="px-4 py-3 text-gray-300">{format(new Date(h.entrada), 'dd/MM HH:mm')}</td>
-                        <td className="px-4 py-3 text-gray-300">{h.saida ? format(new Date(h.saida), 'dd/MM HH:mm') : '-'}</td>
-                        <td className="px-4 py-3 text-right font-medium text-white">
-                          R$ {(h.valor ?? 0).toFixed(2).replace('.', ',')}
+                  </thead>
+                  <tbody>
+                    {historyFilteredList.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
+                          {historyBaseList.length === 0
+                            ? (historicoFiltro24h ? 'Nenhum registro nas últimas 24h' : 'Nenhum registro finalizado neste dia')
+                            : 'Nenhum resultado na busca por placa'}
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      historyFilteredList.map((h) => (
+                        <tr key={h.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                          <td className="px-4 py-3 font-medium text-white">{h.placa}</td>
+                          <td className="px-4 py-3 text-gray-300">{format(new Date(h.entrada), 'dd/MM HH:mm')}</td>
+                          <td className="px-4 py-3 text-gray-300">{h.saida ? format(new Date(h.saida), 'dd/MM HH:mm') : '-'}</td>
+                          <td className="px-4 py-3 text-right font-medium text-white">
+                            R$ {(h.valor ?? 0).toFixed(2).replace('.', ',')}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {view === 'relatorio' && (
         <div className="flex-1 p-6 overflow-y-auto">
@@ -892,6 +1019,14 @@ function App(): React.JSX.Element {
                       Salvo em {format(new Date(dailyReport.saved.createdAt), 'dd/MM/yyyy HH:mm')}
                     </p>
                   )}
+                </div>
+              </div>
+              <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
+                <p className="text-sm text-gray-300 mb-2 font-semibold">Tabela atual de mensalistas (referência)</p>
+                <div className="text-sm text-gray-400 space-y-1">
+                  <p>Mensalista Carro 1: R$ 60,00</p>
+                  <p>Mensalista Moto: R$ 50,00</p>
+                  <p>Carro e Moto (ou 2 carros / 2 motos): R$ 75,00</p>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -978,6 +1113,20 @@ function App(): React.JSX.Element {
               className="w-full max-w-md px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+              <p className="text-xs text-gray-400">Em atraso</p>
+              <p className="text-xl font-bold text-red-400">{clients.filter((c) => c.financialStatus === 'Em atraso').length}</p>
+            </div>
+            <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+              <p className="text-xs text-gray-400">Vence hoje</p>
+              <p className="text-xl font-bold text-amber-400">{clients.filter((c) => c.financialStatus === 'Vence hoje').length}</p>
+            </div>
+            <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+              <p className="text-xs text-gray-400">A vencer</p>
+              <p className="text-xl font-bold text-blue-400">{clients.filter((c) => c.financialStatus === 'A vencer').length}</p>
+            </div>
+          </div>
           <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-left">
@@ -986,6 +1135,9 @@ function App(): React.JSX.Element {
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Nome</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Plano</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Vencimento</th>
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Último pagamento</th>
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Competência</th>
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Sit. financeira</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Status</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Placas</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Ações</th>
@@ -994,16 +1146,39 @@ function App(): React.JSX.Element {
                 <tbody>
                   {filteredClients.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                         {clients.length === 0 ? 'Nenhum mensalista cadastrado' : 'Nenhum resultado na busca'}
                       </td>
                     </tr>
                   ) : (
                     filteredClients.map((c) => (
-                      <tr key={c.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                      <tr
+                        key={c.id}
+                        className={clsx(
+                          'border-b border-gray-700/50',
+                          c.isDebtor ? 'bg-red-900/40 hover:bg-red-900/60' : 'hover:bg-gray-700/30'
+                        )}
+                      >
                         <td className="px-4 py-3 font-medium text-white">{c.name}</td>
                         <td className="px-4 py-3 text-gray-300">{planLabel(c.plan_type)}</td>
                         <td className="px-4 py-3 text-gray-300">{format(new Date(c.expiry_date), 'dd/MM/yyyy')}</td>
+                        <td className="px-4 py-3 text-gray-300">
+                          {c.lastPaymentDate ? format(new Date(c.lastPaymentDate), 'dd/MM/yyyy HH:mm') : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-gray-300">{competenciaLabel(c.lastPaymentCompetency)}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={clsx(
+                              'px-2 py-1 rounded text-xs font-medium',
+                              c.financialStatus === 'Em atraso' && 'bg-red-900/60 text-red-300',
+                              c.financialStatus === 'Vence hoje' && 'bg-amber-900/60 text-amber-300',
+                              c.financialStatus === 'A vencer' && 'bg-blue-900/60 text-blue-300',
+                              c.financialStatus === 'Em dia' && 'bg-green-900/60 text-green-300'
+                            )}
+                          >
+                            {c.financialStatus ?? '—'}
+                          </span>
+                        </td>
                         <td className="px-4 py-3">
                           <span
                             className={clsx(
@@ -1023,6 +1198,20 @@ function App(): React.JSX.Element {
                           {formatPlatesDisplay(c.plates ?? []).text}
                         </td>
                         <td className="px-4 py-3 flex gap-1">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const data = await window.api.getClientStatement(c.id)
+                              setStatementData(data as ClientStatement | null)
+                              setStatementOpen(true)
+                            }}
+                            className="p-2 text-gray-400 hover:text-blue-400 rounded"
+                            title="Extrato"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5l5 5v11a2 2 0 01-2 2z" />
+                            </svg>
+                          </button>
                           <button
                             type="button"
                             onClick={() => openEditarCliente(c)}
@@ -1123,6 +1312,15 @@ function App(): React.JSX.Element {
               <p className="text-2xl font-bold text-green-500">
                 R$ {totalRenovacoesMes.toFixed(2).replace('.', ',')}
               </p>
+              {financialByMethod.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {financialByMethod.map((m) => (
+                    <p key={m.payment_method} className="text-xs text-gray-300">
+                      {m.payment_method}: R$ {(m.total ?? 0).toFixed(2).replace('.', ',')}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
               <p className="text-sm text-gray-400">Total Recebido (Avulsos) - {MESES[financeFilterMonth - 1]}/{financeFilterYear}</p>
@@ -1311,6 +1509,143 @@ function App(): React.JSX.Element {
         onConfirm={confirmState.onConfirm}
         confirmLabel="Confirmar"
       />
+
+      {modalExcluirTodosOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => !excluirTodosLoading && setModalExcluirTodosOpen(false)}>
+          <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 shadow-xl max-w-sm w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-white mb-2">Excluir todos do pátio</h3>
+            <p className="text-sm text-gray-400 mb-4">Digite a senha para remover todos os veículos do pátio sem cobrança.</p>
+            <input
+              type="password"
+              value={excluirTodosPassword}
+              onChange={(e) => { setExcluirTodosPassword(e.target.value); setExcluirTodosError('') }}
+              placeholder="Senha"
+              className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500 mb-4"
+              autoFocus
+            />
+            {excluirTodosError && <p className="text-sm text-red-400 mb-2">{excluirTodosError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setModalExcluirTodosOpen(false)}
+                disabled={excluirTodosLoading}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 font-medium disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setExcluirTodosError('')
+                  setExcluirTodosLoading(true)
+                  try {
+                    const res = await window.api.excludeAllActiveTickets({ password: excluirTodosPassword })
+                    if (res.success) {
+                      setModalExcluirTodosOpen(false)
+                      setExcluirTodosPassword('')
+                      showAlert('Sucesso', 'Todos os veículos foram removidos do pátio.', 'success')
+                      await loadTickets()
+                      window.api.getExcludedTickets().then(setExcludedTickets)
+                    } else {
+                      setExcluirTodosError(res.error ?? 'Senha incorreta.')
+                    }
+                  } catch (e) {
+                    setExcluirTodosError('Erro ao executar. Tente novamente.')
+                  } finally {
+                    setExcluirTodosLoading(false)
+                  }
+                }}
+                disabled={excluirTodosLoading}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-white font-medium disabled:opacity-50"
+              >
+                {excluirTodosLoading ? 'Aguarde...' : 'Confirmar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {debtorDecisionOpen && pendingEntry && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70]">
+          <div className="bg-gray-800 border-2 border-red-600 rounded-xl p-6 max-w-lg w-full mx-4">
+            <h3 className="text-xl font-bold text-red-300 mb-2 text-center">Mensalista com saldo devedor</h3>
+            <p className="text-sm text-gray-200 text-center mb-4">
+              Este mensalista está inadimplente. Hoje ele pode ser cobrado como avulso ou quitar a mensalidade agora.
+            </p>
+            <div className="flex gap-3 justify-center">
+              <button
+                type="button"
+                onClick={async () => {
+                  const info = pendingEntry.info
+                  let fallbackType: 'Carro' | 'Moto' = tipo
+                  if (info.planType === 'MENSAL_MOTO') fallbackType = 'Moto'
+                  if (info.planType === 'MENSAL_CARRO') fallbackType = 'Carro'
+                  await registerEntryWithType(pendingEntry.plate, fallbackType)
+                  setDebtorDecisionOpen(false)
+                  setPendingEntry(null)
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium"
+              >
+                Cobrar como avulso
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDebtorDecisionOpen(false)
+                  setPendingEntry(null)
+                  setView('mensalistas')
+                  showAlert('Quitar mensalidade', 'Use o botão Renovar no cadastro do cliente para quitar e liberar benefício mensalista.', 'success')
+                }}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium"
+              >
+                Quitar mensalidade agora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {statementOpen && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70]" onClick={() => setStatementOpen(false)}>
+          <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 max-w-3xl w-full mx-4 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-white">Extrato do mensalista</h3>
+              <button type="button" onClick={() => setStatementOpen(false)} className="text-gray-300 hover:text-white">Fechar</button>
+            </div>
+            {!statementData ? (
+              <p className="text-gray-400">Nenhum dado encontrado.</p>
+            ) : (
+              <>
+                <p className="text-sm text-gray-300 mb-3">
+                  Cliente: <strong>{statementData.client.name}</strong> | Total pagamentos: R$ {statementData.totals.payments.toFixed(2).replace('.', ',')} | Avulsos em atraso: R$ {statementData.totals.avulsos.toFixed(2).replace('.', ',')}
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-white mb-2">Pagamentos</p>
+                    <div className="space-y-1 text-xs text-gray-300">
+                      {statementData.payments.slice(0, 20).map((p) => (
+                        <div key={p.id} className="bg-gray-700/60 rounded p-2">
+                          {format(new Date(p.payment_date), 'dd/MM/yyyy HH:mm')} - R$ {p.amount.toFixed(2).replace('.', ',')} - {p.payment_method} {p.competency_month ? `- comp ${competenciaLabel(p.competency_month)}` : ''}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-white mb-2">Avulsos em período de atraso</p>
+                    <div className="space-y-1 text-xs text-gray-300">
+                      {statementData.avulsoWhileDebtor.slice(0, 20).map((t) => (
+                        <div key={t.id} className="bg-gray-700/60 rounded p-2">
+                          {t.placa} - {format(new Date(t.saida), 'dd/MM/yyyy HH:mm')} - R$ {(t.valor ?? 0).toFixed(2).replace('.', ',')}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

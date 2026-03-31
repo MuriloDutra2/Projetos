@@ -6,6 +6,7 @@ const api = {
   getTickets: () => ipcRenderer.invoke('get-tickets'),
   getHistory: () => ipcRenderer.invoke('get-history'),
   getHistoryForDay: (dateStr: string) => ipcRenderer.invoke('get-history-for-day', dateStr),
+  getHistoryLast24h: () => ipcRenderer.invoke('get-history-last24h'),
   getDailyReport: (dateStr: string) => ipcRenderer.invoke('get-daily-report', dateStr),
   saveDailyReport: (data: {
     dateStr: string
@@ -17,6 +18,8 @@ const api = {
   }) => ipcRenderer.invoke('save-daily-report', data),
   excludeTicket: (data: { id: number; password: string }) =>
     ipcRenderer.invoke('exclude-ticket', data),
+  excludeAllActiveTickets: (data: { password: string }) =>
+    ipcRenderer.invoke('exclude-all-active-tickets', data),
   getExcludedTickets: () => ipcRenderer.invoke('get-excluded-tickets'),
   exportDailyReportPdf: (data: {
     dateStr: string
@@ -61,8 +64,14 @@ const api = {
     clientId: number
     planType: string
     amount: number
+    months?: number
+    paymentMethod?: string
+    notes?: string
   }) => ipcRenderer.invoke('renew-subscription', data),
   getFinancialHistory: () => ipcRenderer.invoke('get-financial-history'),
+  getFinancialSummaryByMethod: (data: { month: number; year: number }) =>
+    ipcRenderer.invoke('get-financial-summary-by-method', data),
+  getClientStatement: (clientId: number) => ipcRenderer.invoke('get-client-statement', clientId),
   exportFinancialCsv: () => ipcRenderer.invoke('export-financial-csv'),
   getPrinters: () => ipcRenderer.invoke('get-printers'),
   getPrinterConfig: () => ipcRenderer.invoke('get-printer-config'),

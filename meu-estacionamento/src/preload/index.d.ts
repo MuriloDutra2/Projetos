@@ -7,6 +7,7 @@ declare global {
       getTickets: () => Promise<any[]>
       getHistory: () => Promise<any[]>
       getHistoryForDay: (dateStr: string) => Promise<any[]>
+      getHistoryLast24h: () => Promise<any[]>
       getDailyReport: (dateStr: string) => Promise<{
         totalAvulsos: number
         planosVendidosCount: number
@@ -22,6 +23,7 @@ declare global {
         qtyMotos: number
       }) => Promise<{ success: boolean; error?: string }>
       excludeTicket: (data: { id: number; password: string }) => Promise<{ success: boolean; error?: string }>
+      excludeAllActiveTickets: (data: { password: string }) => Promise<{ success: boolean; error?: string }>
       getExcludedTickets: () => Promise<{ id: number; placa: string; tipo: string; entrada: string; saida: string }[]>
       exportDailyReportPdf: (data: {
         dateStr: string
@@ -32,23 +34,42 @@ declare global {
         qtyMotos: number
         savedAt?: string
       }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
-      createTicket: (data: { placa: string; tipo: string }) => Promise<{ success: boolean; id?: number; entrada?: string; error?: string; message?: string }>
+      createTicket: (data: { placa: string; tipo: string }) => Promise<{ success: boolean; id?: number; entrada?: string; billedAsAvulso?: boolean; error?: string; message?: string }>
       checkoutTicket: (data: { id: number }) => Promise<{ success: boolean; valor?: number; error?: string }>
       calculateValue: (data: { entrada: string; placa?: string; tipo?: string }) => Promise<{ valor: number }>
       checkPlateSubscription: (placa: string) => Promise<{
         isSubscriber: boolean
+        clientId?: number
         clientName: string
         planType: string
         isExpired: boolean
         expiryDate: string
         freeMinutes: number
+        isDebtor: boolean
       }>
       checkPlateWasInToday: (placa: string) => Promise<boolean>
       getClients: () => Promise<any[]>
       createClient: (data: { name: string; cpf: string; phone: string; plan_type: string; expiry_date: string; plates: string[] }) => Promise<{ success: boolean; id?: number; error?: string }>
       updateClient: (data: { id: number; name: string; cpf: string; phone: string; plan_type: string; expiry_date: string; plates: string[] }) => Promise<{ success: boolean; error?: string }>
-      renewSubscription: (data: { clientId: number; planType: string; amount: number }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
+      renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
       getFinancialHistory: () => Promise<any[]>
+      getFinancialSummaryByMethod: (data: { month: number; year: number }) => Promise<{ payment_method: string; total: number }[]>
+      getClientStatement: (clientId: number) => Promise<{
+        client: { id: number; name: string; cpf?: string; phone?: string; plan_type: string; expiry_date: string; active: number }
+        payments: {
+          id: number
+          amount: number
+          plan_type: string
+          payment_date: string
+          new_expiry_date: string
+          payment_method: string
+          competency_month?: string | null
+          is_advance: number
+          notes?: string | null
+        }[]
+        avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number }[]
+        totals: { payments: number; avulsos: number }
+      } | null>
       exportFinancialCsv: () => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
       getPrinters: () => Promise<{ name: string; displayName: string }[]>
       getPrinterConfig: () => Promise<string>

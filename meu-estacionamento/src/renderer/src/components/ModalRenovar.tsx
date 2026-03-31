@@ -54,10 +54,18 @@ export default function ModalRenovar({
   onAlert
 }: ModalRenovarProps): React.JSX.Element | null {
   const [amountStr, setAmountStr] = useState('')
+  const [months, setMonths] = useState(1)
+  const [paymentMethod, setPaymentMethod] = useState('Pix')
+  const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (open) setAmountStr('')
+    if (open) {
+      setAmountStr('')
+      setMonths(1)
+      setPaymentMethod('Pix')
+      setNotes('')
+    }
   }, [open])
 
   if (!open) return null
@@ -79,7 +87,10 @@ export default function ModalRenovar({
       const result = await window.api.renewSubscription({
         clientId,
         planType,
-        amount
+        amount,
+        months: planType.startsWith('MENSAL') ? months : 1,
+        paymentMethod,
+        notes
       })
       if (result.success) {
         try {
@@ -152,6 +163,51 @@ export default function ModalRenovar({
               value={amountStr}
               onChange={(e) => setAmountStr(maskCurrency(e.target.value))}
               placeholder="0,00"
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500"
+            />
+          </div>
+          {planType.startsWith('MENSAL') && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Meses para pagar
+              </label>
+              <select
+                value={months}
+                onChange={(e) => setMonths(Number(e.target.value))}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+              >
+                {[1, 2, 3, 6, 12].map((m) => (
+                  <option key={m} value={m}>
+                    {m} mês{m > 1 ? 'es' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Forma de pagamento
+            </label>
+            <select
+              value={paymentMethod}
+              onChange={(e) => setPaymentMethod(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+            >
+              <option>Pix</option>
+              <option>Dinheiro</option>
+              <option>Cartão</option>
+              <option>Transferência</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Observação (opcional)
+            </label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Ex.: pagamento antecipado"
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500"
             />
           </div>

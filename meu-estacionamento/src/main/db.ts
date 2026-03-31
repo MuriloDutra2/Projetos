@@ -9,6 +9,13 @@ const dbPath =
 
 const db = new Database(dbPath)
 
+function ensureColumn(table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`)
+  }
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS tickets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,6 +71,11 @@ db.exec(`
   )
 `)
 
+ensureColumn('subscription_payments', 'payment_method', "payment_method TEXT NOT NULL DEFAULT 'Não informado'")
+ensureColumn('subscription_payments', 'competency_month', 'competency_month TEXT')
+ensureColumn('subscription_payments', 'is_advance', 'is_advance INTEGER NOT NULL DEFAULT 0')
+ensureColumn('subscription_payments', 'notes', 'notes TEXT')
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS daily_reports (
     report_date TEXT PRIMARY KEY,
@@ -90,6 +102,13 @@ const stmts = {
     WHERE status = 'FINALIZADO' AND date(saida) = date(?)
     ORDER BY saida DESC
   `),
+  /** Veículos com saída nas últimas 24 horas (saida >= sinceIso). */
+  getHistoryLast24h: db.prepare(`
+    SELECT id, placa, tipo, entrada, saida, valor
+    FROM tickets
+    WHERE status = 'FINALIZADO' AND saida >= ?
+    ORDER BY saida DESC
+  `),
   getAllFinishedForFinance: db.prepare(
     "SELECT id, placa, tipo, entrada, saida, valor, 'ticket' as source FROM tickets WHERE status = 'FINALIZADO' ORDER BY saida DESC LIMIT 200"
   ),
@@ -104,6 +123,9 @@ const stmts = {
   ),
   excludeTicket: db.prepare(
     "UPDATE tickets SET status = 'EXCLUIDO', saida = ?, valor = 0 WHERE id = ?"
+  ),
+  excludeAllActiveTickets: db.prepare(
+    "UPDATE tickets SET status = 'EXCLUIDO', saida = ?, valor = 0 WHERE status = 'ATIVO'"
   ),
   getExcludedTickets: db.prepare(
     "SELECT id, placa, tipo, entrada, saida FROM tickets WHERE status = 'EXCLUIDO' ORDER BY saida DESC"
@@ -128,6 +150,18 @@ const stmts = {
     FROM clients c
     ORDER BY c.name
   `),
+  getLatestPaymentByClientId: db.prepare(`
+    SELECT payment_date, amount, competency_month, payment_method, is_advance
+    FROM subscription_payments
+    WHERE client_id = ?
+    ORDER BY payment_date DESC
+    LIMIT 1
+  `),
+  getMaxCompetencyByClientId: db.prepare(`
+    SELECT MAX(competency_month) as max_competency
+    FROM subscription_payments
+    WHERE client_id = ? AND competency_month IS NOT NULL
+  `),
   getVehicleByPlate: db.prepare(
     'SELECT cv.*, c.name, c.plan_type, c.expiry_date, c.active FROM client_vehicles cv JOIN clients c ON c.id = cv.client_id WHERE cv.plate = ?'
   ),
@@ -142,7 +176,7 @@ const stmts = {
   ),
   deleteClientVehicles: db.prepare('DELETE FROM client_vehicles WHERE client_id = ?'),
   insertSubscriptionPayment: db.prepare(
-    'INSERT INTO subscription_payments (client_id, amount, plan_type, payment_date, new_expiry_date) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO subscription_payments (client_id, amount, plan_type, payment_date, new_expiry_date, payment_method, competency_month, is_advance, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   getFinancialHistory: db.prepare(`
     SELECT sp.*, c.name as client_name
@@ -150,6 +184,52 @@ const stmts = {
     JOIN clients c ON c.id = sp.client_id
     ORDER BY sp.payment_date DESC
     LIMIT 200
+  `),
+  getFinancialHistoryByMethod: db.prepare(`
+    SELECT COALESCE(payment_method, 'Não informado') as payment_method, COALESCE(SUM(amount), 0) as total
+    FROM subscription_payments
+    WHERE date(payment_date) >= date(?) AND date(payment_date) <= date(?)
+    GROUP BY COALESCE(payment_method, 'Não informado')
+    ORDER BY total DESC
+  `),
+  hasPaymentInMonth: db.prepare(`
+    SELECT 1
+    FROM subscription_payments
+    WHERE client_id = ?
+      AND (
+        competency_month = ?
+        OR (competency_month IS NULL AND strftime('%Y-%m', payment_date) = ?)
+      )
+    LIMIT 1
+  `),
+  getClientVehiclesByClientId: db.prepare(`
+    SELECT plate
+    FROM client_vehicles
+    WHERE client_id = ?
+  `),
+  getClientById: db.prepare(`
+    SELECT id, name, cpf, phone, plan_type, expiry_date, active
+    FROM clients
+    WHERE id = ?
+    LIMIT 1
+  `),
+  getPaymentsByClientId: db.prepare(`
+    SELECT id, amount, plan_type, payment_date, new_expiry_date, payment_method, competency_month, is_advance, notes
+    FROM subscription_payments
+    WHERE client_id = ?
+    ORDER BY payment_date DESC
+  `),
+  getFinishedTicketsByPlates: db.prepare(`
+    SELECT id, placa, tipo, entrada, saida, valor
+    FROM tickets
+    WHERE status = 'FINALIZADO' AND placa IN (SELECT plate FROM client_vehicles WHERE client_id = ?)
+    ORDER BY saida DESC
+    LIMIT 500
+  `),
+  updateActiveTicketTypeByPlate: db.prepare(`
+    UPDATE tickets
+    SET tipo = 'MENSALISTA'
+    WHERE status = 'ATIVO' AND placa = ?
   `),
   /** Total avulsos (valor) no dia. dateStr = YYYY-MM-DD */
   getTotalAvulsosForDay: db.prepare(
@@ -200,6 +280,26 @@ export const dbOperations = {
   getHistory: () => stmts.getHistory.all(),
   getAllFinishedTicketsForFinance: () => stmts.getAllFinishedForFinance.all(),
 
+  getCurrentCompetencyMonth: (nowDate?: Date) => {
+    const now = nowDate ?? new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  },
+
+  addMonthsToCompetency: (competency: string, monthsToAdd: number): string => {
+    const [y, m] = competency.split('-').map(Number)
+    const d = new Date(y, (m - 1) + monthsToAdd, 1)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  },
+
+  isMensalistaDebtor: (clientId: number, nowDate?: Date) => {
+    const now = nowDate ?? new Date()
+    const day = now.getDate()
+    if (day <= 10) return false
+    const monthKey = dbOperations.getCurrentCompetencyMonth(now)
+    const payment = stmts.hasPaymentInMonth.get(clientId, monthKey, monthKey)
+    return !payment
+  },
+
   hasActiveTicket: (placa: string) => {
     const raw = placa.replace(/[^A-Z0-9]/gi, '').toUpperCase()
     const row = stmts.getActiveByPlaca.get(raw) as { id: number } | undefined
@@ -215,6 +315,9 @@ export const dbOperations = {
   },
   excludeTicket: (id: number) => {
     stmts.excludeTicket.run(new Date().toISOString(), id)
+  },
+  excludeAllActiveTickets: () => {
+    stmts.excludeAllActiveTickets.run(new Date().toISOString())
   },
   getExcludedTickets: () => stmts.getExcludedTickets.all() as { id: number; placa: string; tipo: string; entrada: string; saida: string }[],
 
@@ -254,17 +357,35 @@ export const dbOperations = {
 
   getClients: () => {
     const rows = stmts.getClientsWithVehicles.all() as any[]
-    return rows.map((r) => ({
-      ...r,
-      plates: r.plates ? r.plates.split(',') : [],
-      isExpired: new Date(r.expiry_date) < new Date(),
-      status:
-        r.active === 0
-          ? 'Inativo'
-          : r.active === 1 && new Date(r.expiry_date) >= new Date()
-            ? 'Ativo'
-            : 'Vencido'
-    }))
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const expiryDateOnly = (s: string) => (s || '').slice(0, 10)
+    return rows.map((r) => {
+      const exp = expiryDateOnly(r.expiry_date)
+      const isExpired = exp < todayStr
+      const isMensalista = typeof r.plan_type === 'string' && r.plan_type.startsWith('MENSAL')
+      const isDebtor = isMensalista ? dbOperations.isMensalistaDebtor(r.id, today) : false
+      const latestPayment = stmts.getLatestPaymentByClientId.get(r.id) as any
+      const currentCompetency = dbOperations.getCurrentCompetencyMonth(today)
+      const paidCurrentCompetency = !!stmts.hasPaymentInMonth.get(r.id, currentCompetency, currentCompetency)
+      let financialStatus = 'Em dia'
+      if (isMensalista) {
+        if (today.getDate() > 10 && !paidCurrentCompetency) financialStatus = 'Em atraso'
+        else if (today.getDate() === 10 && !paidCurrentCompetency) financialStatus = 'Vence hoje'
+        else if (today.getDate() < 10 && !paidCurrentCompetency) financialStatus = 'A vencer'
+      }
+      return {
+        ...r,
+        plates: r.plates ? r.plates.split(',') : [],
+        isExpired,
+        isDebtor,
+        lastPaymentDate: latestPayment?.payment_date ?? null,
+        lastPaymentCompetency: latestPayment?.competency_month ?? null,
+        financialStatus,
+        status:
+          r.active === 0 ? 'Inativo' : r.active === 1 && !isExpired ? 'Ativo' : 'Vencido'
+      }
+    })
   },
 
   updateClientActive: (clientId: number, active: number) => {
@@ -304,8 +425,10 @@ export const dbOperations = {
     const raw = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
     const row = stmts.getVehicleByPlate.get(raw) as any
     if (!row) return null
-    const expiry = new Date(row.expiry_date)
-    const isExpired = row.active !== 1 || expiry < new Date()
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const expiryStr = (row.expiry_date || '').slice(0, 10)
+    const isExpired = row.active !== 1 || expiryStr < todayStr
     let freeMinutes = 90
     if (row.plan_type === 'FUNCIONARIO') freeMinutes = 720
     else if (row.plan_type === 'GARAGEM') freeMinutes = 999999
@@ -316,11 +439,20 @@ export const dbOperations = {
       planType: row.plan_type,
       expiryDate: row.expiry_date,
       isExpired,
-      freeMinutes
+      freeMinutes,
+      isDebtor:
+        row.plan_type && row.plan_type.startsWith('MENSAL')
+          ? dbOperations.isMensalistaDebtor(row.client_id)
+          : false
     }
   },
 
   getHistoryForDay: (dateStr: string) => stmts.getHistoryForDay.all(dateStr),
+
+  getHistoryLast24h: () => {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    return stmts.getHistoryLast24h.all(since)
+  },
 
   getDailyReport: (dateStr: string) => {
     const avulsosRow = stmts.getTotalAvulsosForDay.get(dateStr) as { total: number } | undefined
@@ -376,24 +508,108 @@ export const dbOperations = {
   },
 
   renewSubscription: (clientId: number, planType: string, amount: number) => {
-    const now = new Date()
-    const newExpiry = new Date(now)
-    newExpiry.setDate(newExpiry.getDate() + 30)
-    const newExpiryStr = newExpiry.toISOString()
-    const paymentDateStr = now.toISOString()
-
-    stmts.updateClientExpiry.run(newExpiryStr, clientId)
-    stmts.insertSubscriptionPayment.run(
+    return dbOperations.renewSubscriptionAdvanced({
       clientId,
-      amount,
       planType,
-      paymentDateStr,
-      newExpiryStr
-    )
+      amount,
+      months: 1,
+      paymentMethod: 'Não informado',
+      notes: ''
+    })
+  },
+
+  renewSubscriptionAdvanced: (data: {
+    clientId: number
+    planType: string
+    amount: number
+    months: number
+    paymentMethod: string
+    notes?: string
+  }) => {
+    const now = new Date()
+    const paymentDateStr = now.toISOString()
+    const notes = data.notes ?? ''
+    const months = Math.max(1, Math.floor(data.months || 1))
+    let newExpiryStr = ''
+
+    if (data.planType.startsWith('MENSAL')) {
+      const maxCompRow = stmts.getMaxCompetencyByClientId.get(data.clientId) as { max_competency?: string } | undefined
+      const currentComp = dbOperations.getCurrentCompetencyMonth(now)
+      const startComp =
+        maxCompRow?.max_competency && maxCompRow.max_competency >= currentComp
+          ? dbOperations.addMonthsToCompetency(maxCompRow.max_competency, 1)
+          : currentComp
+
+      let lastComp = startComp
+      for (let i = 0; i < months; i++) {
+        const competency = dbOperations.addMonthsToCompetency(startComp, i)
+        lastComp = competency
+        stmts.insertSubscriptionPayment.run(
+          data.clientId,
+          data.amount,
+          data.planType,
+          paymentDateStr,
+          '',
+          data.paymentMethod || 'Não informado',
+          competency,
+          i > 0 ? 1 : 0,
+          notes
+        )
+      }
+      const [y, m] = lastComp.split('-').map(Number)
+      const exp = new Date(y, m, 10)
+      newExpiryStr = `${exp.getFullYear()}-${String(exp.getMonth() + 1).padStart(2, '0')}-${String(exp.getDate()).padStart(2, '0')}`
+    } else {
+      const newExpiry = new Date(now)
+      newExpiry.setDate(newExpiry.getDate() + 30)
+      newExpiryStr = `${newExpiry.getFullYear()}-${String(newExpiry.getMonth() + 1).padStart(2, '0')}-${String(newExpiry.getDate()).padStart(2, '0')}`
+      stmts.insertSubscriptionPayment.run(
+        data.clientId,
+        data.amount,
+        data.planType,
+        paymentDateStr,
+        newExpiryStr,
+        data.paymentMethod || 'Não informado',
+        null,
+        0,
+        notes
+      )
+    }
+
+    stmts.updateClientExpiry.run(newExpiryStr, data.clientId)
+    const clientVehicles = stmts.getClientVehiclesByClientId.all(data.clientId) as { plate: string }[]
+    for (const v of clientVehicles) {
+      const raw = (v.plate ?? '').replace(/[^A-Z0-9]/gi, '').toUpperCase()
+      if (raw) stmts.updateActiveTicketTypeByPlate.run(raw)
+    }
     return newExpiryStr
   },
 
-  getFinancialHistory: () => stmts.getFinancialHistory.all()
+  getFinancialHistory: () => stmts.getFinancialHistory.all(),
+
+  getFinancialSummaryByMethod: (month: number, year: number) => {
+    const start = `${year}-${String(month).padStart(2, '0')}-01`
+    const endDate = new Date(year, month, 0)
+    const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`
+    return stmts.getFinancialHistoryByMethod.all(start, end)
+  },
+
+  getClientStatement: (clientId: number) => {
+    const client = stmts.getClientById.get(clientId) as any
+    if (!client) return null
+    const payments = stmts.getPaymentsByClientId.all(clientId) as any[]
+    const tickets = stmts.getFinishedTicketsByPlates.all(clientId) as any[]
+    const avulsoWhileDebtor = tickets.filter((t) => t.tipo === 'Carro' || t.tipo === 'Moto')
+    return {
+      client,
+      payments,
+      avulsoWhileDebtor,
+      totals: {
+        payments: payments.reduce((s, p) => s + (p.amount ?? 0), 0),
+        avulsos: avulsoWhileDebtor.reduce((s, t) => s + (t.valor ?? 0), 0)
+      }
+    }
+  }
 }
 
 export default db

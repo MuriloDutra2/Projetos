@@ -4,11 +4,21 @@ import { friendlyError } from '../utils/errorHandler'
 
 const PLANOS = [
   { value: 'MENSAL_CARRO', label: 'Mensal Carro (2h30) - R$ 60,00', planName: 'Mensal Carro (2h30)', valor: 60 },
-  { value: 'MENSAL_MOTO', label: 'Mensal Moto (2h30) - R$ 45,00', planName: 'Mensal Moto (2h30)', valor: 45 },
-  { value: 'MENSAL_CARRO_MOTO', label: 'Mensal Carro e Moto - R$ 70,00', planName: 'Mensal Carro e Moto', valor: 70 },
+  { value: 'MENSAL_MOTO', label: 'Mensal Moto (2h30) - R$ 50,00', planName: 'Mensal Moto (2h30)', valor: 50 },
+  { value: 'MENSAL_CARRO_MOTO', label: 'Carro e Moto (ou 2 carros / 2 motos) - R$ 75,00', planName: 'Carro e Moto (ou 2 carros / 2 motos)', valor: 75 },
   { value: 'GARAGEM', label: 'Garagem - R$ 180,00', planName: 'Garagem', valor: 180 },
   { value: 'FUNCIONARIO', label: 'Funcionário (Livre) - R$ 50,00', planName: 'Funcionário (Livre)', valor: 50 }
 ] as const
+
+function defaultExpiryForPlan(planType: string): string {
+  const d = new Date()
+  if (planType.startsWith('MENSAL')) {
+    d.setMonth(d.getMonth() + 1, 10)
+  } else {
+    d.setDate(d.getDate() + 30)
+  }
+  return d.toISOString().slice(0, 10)
+}
 
 export interface ClientToEdit {
   id: number
@@ -46,11 +56,7 @@ export default function ModalNovoCliente({
   const [birthDate, setBirthDate] = useState('')
   const [phone, setPhone] = useState('')
   const [planType, setPlanType] = useState<string>(PLANOS[0].value)
-  const [expiryDate, setExpiryDate] = useState(() => {
-    const d = new Date()
-    d.setMonth(d.getMonth() + 1)
-    return d.toISOString().slice(0, 10)
-  })
+  const [expiryDate, setExpiryDate] = useState(() => defaultExpiryForPlan(PLANOS[0].value))
   const [plates, setPlates] = useState<string[]>([''])
   const [loading, setLoading] = useState(false)
 
@@ -72,12 +78,15 @@ export default function ModalNovoCliente({
       setBirthDate('')
       setPhone('')
       setPlanType(PLANOS[0].value)
-      const d = new Date()
-      d.setMonth(d.getMonth() + 1)
-      setExpiryDate(d.toISOString().slice(0, 10))
+      setExpiryDate(defaultExpiryForPlan(PLANOS[0].value))
       setPlates([''])
     }
   }, [open, clientToEdit])
+
+  useEffect(() => {
+    if (!open || isEdit) return
+    setExpiryDate(defaultExpiryForPlan(planType))
+  }, [planType, open, isEdit])
 
   if (!open) return null
 
@@ -131,7 +140,7 @@ export default function ModalNovoCliente({
         cpf: cpfDigits,
         phone: unmask(phone),
         plan_type: planType,
-        expiry_date: new Date(expiryDate).toISOString(),
+        expiry_date: expiryDate.slice(0, 10),
         plates: validPlates
       }
       const result = isEdit && clientToEdit
