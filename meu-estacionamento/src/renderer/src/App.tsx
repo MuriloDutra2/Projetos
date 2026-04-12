@@ -55,6 +55,9 @@ interface ClientRow {
   lastPaymentDate?: string | null
   lastPaymentCompetency?: string | null
   financialStatus?: 'Em dia' | 'Vence hoje' | 'A vencer' | 'Em atraso' | string
+  garage_billing_day?: number | null
+  garage_billing_month?: number | null
+  garageBillingLabel?: string | null
 }
 
 interface SubscriptionInfo {
@@ -165,8 +168,13 @@ function App(): React.JSX.Element {
   const [excluirTodosError, setExcluirTodosError] = useState('')
   const [debtorDecisionOpen, setDebtorDecisionOpen] = useState(false)
   const [pendingEntry, setPendingEntry] = useState<{ plate: string; info: SubscriptionInfo } | null>(null)
+  const [garageEntryModal, setGarageEntryModal] = useState<{ plate: string; clientName: string } | null>(null)
   const [statementOpen, setStatementOpen] = useState(false)
   const [statementData, setStatementData] = useState<ClientStatement | null>(null)
+  const [deleteClientModal, setDeleteClientModal] = useState<ClientRow | null>(null)
+  const [deleteClientPassword, setDeleteClientPassword] = useState('')
+  const [deleteClientError, setDeleteClientError] = useState('')
+  const [deleteClientLoading, setDeleteClientLoading] = useState(false)
 
   useEffect(() => {
     loadTickets()
@@ -330,7 +338,7 @@ function App(): React.JSX.Element {
       const result = await window.api.checkoutTicket({ id: checkoutTicket.id })
       if (result.success) {
         const valorCobrado = result.valor ?? checkoutValor
-        if (valorCobrado > 0) {
+        if (valorCobrado > 0 && checkoutTicket.tipo !== 'GARAGEM') {
           try {
             const saida = new Date().toISOString()
             const minutos = differenceInMinutes(new Date(), new Date(checkoutTicket.entrada))
@@ -427,18 +435,20 @@ function App(): React.JSX.Element {
       setPlaca('')
       setSubscriptionInfo(null)
       setPlateWasInToday(null)
-      try {
-        const printRes = await window.electron.ipcRenderer.invoke('print-entry', {
-          id: result.id,
-          placa: plate.toUpperCase(),
-          entrada: result.entrada ?? new Date().toISOString()
-        })
-        if (printRes && !printRes.success) {
-          showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+      if (typeToSave !== 'GARAGEM') {
+        try {
+          const printRes = await window.electron.ipcRenderer.invoke('print-entry', {
+            id: result.id,
+            placa: plate.toUpperCase(),
+            entrada: result.entrada ?? new Date().toISOString()
+          })
+          if (printRes && !printRes.success) {
+            showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+          }
+        } catch (err) {
+          console.error(err)
+          showAlert('Erro de impressão', friendlyError(err), 'error')
         }
-      } catch (err) {
-        console.error(err)
-        showAlert('Erro de impressão', friendlyError(err), 'error')
       }
       await loadTickets()
       return
@@ -460,14 +470,22 @@ function App(): React.JSX.Element {
         if (plateToRaw(placa).length >= 7) {
           const info = await window.api.checkPlateSubscription(placa)
           if (info?.isSubscriber && !info?.isExpired) {
-            if (info?.isDebtor && info?.planType?.startsWith('MENSAL')) {
+            if (
+              info?.isDebtor &&
+              (info?.planType?.startsWith('MENSAL') || info?.planType === 'GARAGEM')
+            ) {
               setPendingEntry({ plate: placa, info })
               setDebtorDecisionOpen(true)
               setLoading(false)
               return
-            } else {
-              tipoToSave = 'MENSALISTA'
             }
+            if (info?.planType === 'GARAGEM') {
+              setGarageEntryModal({ plate: placa, clientName: info.clientName })
+              setSubscriptionInfo(info)
+              setLoading(false)
+              return
+            }
+            tipoToSave = 'MENSALISTA'
           }
           setSubscriptionInfo(info)
         }
@@ -553,7 +571,9 @@ function App(): React.JSX.Element {
       phone: c.phone,
       plan_type: c.plan_type,
       expiry_date: c.expiry_date,
-      plates: c.plates ?? []
+      plates: c.plates ?? [],
+      garage_billing_day: c.garage_billing_day ?? null,
+      garage_billing_month: c.garage_billing_month ?? null
     })
     setModalNovoClienteOpen(true)
   }
@@ -703,7 +723,12 @@ function App(): React.JSX.Element {
                 />
               </div>
 
-              {subscriptionInfo?.isSubscriber && !subscriptionInfo?.isExpired && (
+              {subscriptionInfo?.isSubscriber && !subscriptionInfo?.isExpired && subscriptionInfo?.planType === 'GARAGEM' && (
+                <div className="p-3 rounded-lg bg-emerald-900/40 border border-emerald-600 text-emerald-200 text-sm">
+                  <strong>GARAGEM:</strong> {subscriptionInfo.clientName} — Acesso livre (sem limite de tempo no pátio).
+                </div>
+              )}
+              {subscriptionInfo?.isSubscriber && !subscriptionInfo?.isExpired && subscriptionInfo?.planType !== 'GARAGEM' && (
                 <div className="p-3 rounded-lg bg-green-900/40 border border-green-600 text-green-200 text-sm">
                   MENSALISTA DETECTADO: {subscriptionInfo.clientName} — Até {subscriptionInfo.freeMinutes} min grátis
                 </div>
@@ -711,6 +736,11 @@ function App(): React.JSX.Element {
               {subscriptionInfo?.isSubscriber && !subscriptionInfo?.isExpired && subscriptionInfo?.isDebtor && subscriptionInfo?.planType?.startsWith('MENSAL') && (
                 <div className="p-3 rounded-lg bg-red-900/40 border border-red-600 text-red-200 text-sm">
                   <strong>Saldo devedor:</strong> este mensalista será cobrado como avulso até o pagamento da mensalidade.
+                </div>
+              )}
+              {subscriptionInfo?.isSubscriber && !subscriptionInfo?.isExpired && subscriptionInfo?.isDebtor && subscriptionInfo?.planType === 'GARAGEM' && (
+                <div className="p-3 rounded-lg bg-red-900/40 border border-red-600 text-red-200 text-sm">
+                  <strong>Garagem em atraso:</strong> cobrar como avulso até a quitação da mensalidade da garagem.
                 </div>
               )}
               {subscriptionInfo?.isSubscriber && subscriptionInfo?.isExpired && (
@@ -792,6 +822,14 @@ function App(): React.JSX.Element {
                     </span>
                   </div>
                 )}
+                {tickets.some((t) => t.tipo === 'GARAGEM') && (
+                  <div className="bg-gray-800 border border-emerald-900 rounded-lg px-4 py-2 flex items-center gap-2">
+                    <span className="text-gray-400 text-sm">Garagem</span>
+                    <span className="text-xl font-bold text-emerald-400">
+                      {tickets.filter((t) => t.tipo === 'GARAGEM').length}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 flex-wrap">
                 <h2 className="text-xl font-bold text-white sm:mr-2">Veículos Estacionados</h2>
@@ -829,20 +867,22 @@ function App(): React.JSX.Element {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredTickets.map((ticket) => {
                   const tempoDecorrido = calcularTempoDecorrido(ticket.entrada)
+                  const isGaragemTicket = ticket.tipo === 'GARAGEM'
                   const freeMin = ticket.tipo === 'MENSALISTA' ? 150 : 90
-                  const isAlerta = tempoDecorrido > freeMin
+                  const isAlerta = !isGaragemTicket && tempoDecorrido > freeMin
+                  const tipoLabel = isGaragemTicket ? 'Garagem (acesso livre)' : ticket.tipo
                   return (
                     <div
                       key={ticket.id}
                       className={clsx(
                         'p-4 rounded-lg border-2 transition-all',
-                        isAlerta ? 'bg-red-900/30 border-red-500' : 'bg-gray-800 border-gray-700'
+                        isAlerta ? 'bg-red-900/30 border-red-500' : isGaragemTicket ? 'bg-emerald-950/40 border-emerald-700' : 'bg-gray-800 border-gray-700'
                       )}
                     >
                       <div className="flex justify-between items-start mb-3">
                         <div>
                           <div className="text-2xl font-bold text-white">{ticket.placa}</div>
-                          <div className="text-sm text-gray-400">{ticket.tipo}</div>
+                          <div className="text-sm text-gray-400">{tipoLabel}</div>
                         </div>
                         {isAlerta && (
                           <span className="px-2 py-1 bg-red-600 text-white text-xs font-bold rounded">ALERTA</span>
@@ -854,9 +894,9 @@ function App(): React.JSX.Element {
                           <span className="font-medium text-white">{format(new Date(ticket.entrada), 'HH:mm')}</span>
                         </div>
                         <div className="text-sm">
-                          <span className="text-gray-400">Tempo: </span>
-                          <span className={clsx('font-bold', isAlerta ? 'text-red-400' : 'text-green-400')}>
-                            {formatarTempo(tempoDecorrido)}
+                          <span className="text-gray-400">Tempo no pátio: </span>
+                          <span className={clsx('font-bold', isGaragemTicket ? 'text-emerald-300' : isAlerta ? 'text-red-400' : 'text-green-400')}>
+                            {isGaragemTicket ? '— (sem cobrança por tempo)' : formatarTempo(tempoDecorrido)}
                           </span>
                         </div>
                       </div>
@@ -1134,6 +1174,7 @@ function App(): React.JSX.Element {
                   <tr className="border-b border-gray-700 bg-gray-700/50">
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Nome</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Plano</th>
+                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Cobr. garagem</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Vencimento</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Último pagamento</th>
                     <th className="px-4 py-3 text-sm font-semibold text-gray-300">Competência</th>
@@ -1146,7 +1187,7 @@ function App(): React.JSX.Element {
                 <tbody>
                   {filteredClients.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                      <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                         {clients.length === 0 ? 'Nenhum mensalista cadastrado' : 'Nenhum resultado na busca'}
                       </td>
                     </tr>
@@ -1161,6 +1202,9 @@ function App(): React.JSX.Element {
                       >
                         <td className="px-4 py-3 font-medium text-white">{c.name}</td>
                         <td className="px-4 py-3 text-gray-300">{planLabel(c.plan_type)}</td>
+                        <td className="px-4 py-3 text-gray-400 text-sm">
+                          {c.plan_type === 'GARAGEM' ? c.garageBillingLabel ?? '—' : '—'}
+                        </td>
                         <td className="px-4 py-3 text-gray-300">{format(new Date(c.expiry_date), 'dd/MM/yyyy')}</td>
                         <td className="px-4 py-3 text-gray-300">
                           {c.lastPaymentDate ? format(new Date(c.lastPaymentDate), 'dd/MM/yyyy HH:mm') : '—'}
@@ -1232,6 +1276,26 @@ function App(): React.JSX.Element {
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteClientModal(c)
+                              setDeleteClientPassword('')
+                              setDeleteClientError('')
+                            }}
+                            className="p-2 text-gray-400 hover:text-red-400 rounded"
+                            title="Excluir cadastro"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                              />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M22 12h-6" />
+                            </svg>
+                          </button>
                           {c.status === 'Inativo' ? (
                             <button
                               type="button"
@@ -1247,11 +1311,16 @@ function App(): React.JSX.Element {
                             <button
                               type="button"
                               onClick={() => openCancelConfirm(c)}
-                              className="p-2 text-gray-400 hover:text-red-400 rounded"
+                              className="p-2 text-gray-400 hover:text-amber-400 rounded"
                               title="Cancelar plano"
                             >
-                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                                />
                               </svg>
                             </button>
                           )}
@@ -1565,12 +1634,122 @@ function App(): React.JSX.Element {
         </div>
       )}
 
+      {deleteClientModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[75]">
+          <div
+            className="bg-gray-800 border border-blue-500/80 rounded-xl p-6 max-w-md w-full mx-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-white mb-2">Excluir mensalista</h3>
+            <p className="text-sm text-gray-300 mb-4">
+              Digite a senha para excluir permanentemente o cadastro de <strong>{deleteClientModal.name}</strong>. O
+              histórico de pagamentos e tickets finalizados permanece no sistema para auditoria.
+            </p>
+            <input
+              type="password"
+              value={deleteClientPassword}
+              onChange={(e) => {
+                setDeleteClientPassword(e.target.value)
+                setDeleteClientError('')
+              }}
+              placeholder="Senha"
+              className="w-full px-3 py-2 mb-2 bg-gray-700 border border-red-500/60 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
+              autoComplete="off"
+            />
+            {deleteClientError && <p className="text-sm text-red-400 mb-3">{deleteClientError}</p>}
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                disabled={deleteClientLoading}
+                onClick={() => {
+                  setDeleteClientModal(null)
+                  setDeleteClientPassword('')
+                  setDeleteClientError('')
+                }}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg font-medium disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={deleteClientLoading}
+                onClick={async () => {
+                  setDeleteClientLoading(true)
+                  setDeleteClientError('')
+                  try {
+                    const res = await window.api.deleteClient({
+                      clientId: deleteClientModal.id,
+                      password: deleteClientPassword
+                    })
+                    if (res.success) {
+                      setDeleteClientModal(null)
+                      setDeleteClientPassword('')
+                      showAlert('Excluído', 'Cadastro do cliente removido.', 'success')
+                      await loadClients()
+                    } else {
+                      setDeleteClientError(res.error ?? 'Não foi possível excluir.')
+                    }
+                  } catch (err) {
+                    setDeleteClientError(friendlyError(err))
+                  } finally {
+                    setDeleteClientLoading(false)
+                  }
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium disabled:opacity-50"
+              >
+                {deleteClientLoading ? 'Aguarde...' : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {garageEntryModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[75]">
+          <div className="bg-gray-800 border-2 border-emerald-600 rounded-xl p-6 max-w-lg w-full mx-4 shadow-xl">
+            <h3 className="text-xl font-bold text-emerald-300 mb-2">Cliente Garagem</h3>
+            <p className="text-sm text-gray-200 mb-4">
+              <strong>{garageEntryModal.clientName}</strong> — Acesso livre no pátio; o sistema apenas registra entrada e saída (sem impressão de ticket).
+            </p>
+            <div className="flex gap-3 justify-end flex-wrap">
+              <button
+                type="button"
+                onClick={() => setGarageEntryModal(null)}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg font-medium"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const g = garageEntryModal
+                  setGarageEntryModal(null)
+                  setLoading(true)
+                  try {
+                    await registerEntryWithType(g.plate, 'GARAGEM')
+                  } finally {
+                    setLoading(false)
+                  }
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium"
+              >
+                Confirmar entrada
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {debtorDecisionOpen && pendingEntry && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70]">
           <div className="bg-gray-800 border-2 border-red-600 rounded-xl p-6 max-w-lg w-full mx-4">
-            <h3 className="text-xl font-bold text-red-300 mb-2 text-center">Mensalista com saldo devedor</h3>
+            <h3 className="text-xl font-bold text-red-300 mb-2 text-center">
+              {pendingEntry.info.planType === 'GARAGEM' ? 'Garagem em atraso' : 'Mensalista com saldo devedor'}
+            </h3>
             <p className="text-sm text-gray-200 text-center mb-4">
-              Este mensalista está inadimplente. Hoje ele pode ser cobrado como avulso ou quitar a mensalidade agora.
+              {pendingEntry.info.planType === 'GARAGEM'
+                ? 'Esta garagem está inadimplente. Pode ser cobrada como avulso ou quitar a mensalidade no cadastro.'
+                : 'Este mensalista está inadimplente. Hoje ele pode ser cobrado como avulso ou quitar a mensalidade agora.'}
             </p>
             <div className="flex gap-3 justify-center">
               <button
@@ -1580,6 +1759,7 @@ function App(): React.JSX.Element {
                   let fallbackType: 'Carro' | 'Moto' = tipo
                   if (info.planType === 'MENSAL_MOTO') fallbackType = 'Moto'
                   if (info.planType === 'MENSAL_CARRO') fallbackType = 'Carro'
+                  if (info.planType === 'GARAGEM') fallbackType = tipo
                   await registerEntryWithType(pendingEntry.plate, fallbackType)
                   setDebtorDecisionOpen(false)
                   setPendingEntry(null)
@@ -1594,11 +1774,17 @@ function App(): React.JSX.Element {
                   setDebtorDecisionOpen(false)
                   setPendingEntry(null)
                   setView('mensalistas')
-                  showAlert('Quitar mensalidade', 'Use o botão Renovar no cadastro do cliente para quitar e liberar benefício mensalista.', 'success')
+                  showAlert(
+                    'Quitar mensalidade',
+                    pendingEntry.info.planType === 'GARAGEM'
+                      ? 'Use o botão Renovar no cadastro do cliente garagem para quitar.'
+                      : 'Use o botão Renovar no cadastro do cliente para quitar e liberar benefício mensalista.',
+                    'success'
+                  )
                 }}
                 className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium"
               >
-                Quitar mensalidade agora
+                Quitar agora
               </button>
             </div>
           </div>

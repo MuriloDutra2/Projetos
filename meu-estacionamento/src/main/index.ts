@@ -1,10 +1,30 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
-import { writeFileSync, existsSync } from 'fs'
+import { writeFileSync, existsSync, mkdirSync } from 'fs'
+
+/**
+ * Cache do Chromium na pasta do app (userData), fora de pastas sincronizadas (ex.: OneDrive),
+ * evita "Unable to move the cache: Acesso negado" e falhas de GPU cache no Windows.
+ */
+function configureStableCachePaths(): void {
+  try {
+    const base = app.getPath('userData')
+    const browserCache = path.join(base, 'browser-cache')
+    mkdirSync(browserCache, { recursive: true })
+    app.setPath('cache', browserCache)
+    app.commandLine.appendSwitch('disk-cache-dir', browserCache)
+    // Evita criação de cache de shader em diretório bloqueado (mensagens gpu_disk_cache / disk_cache).
+    app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+  } catch (e) {
+    console.warn('Não foi possível configurar pastas de cache:', e)
+  }
+}
+
+configureStableCachePaths()
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { dbOperations, translateDbError } from './db'
-import { calcularValor, minutosDaEstadia } from './calculations'
+import { calcularValor, splitStayIntoLocalDaySegments } from './calculations'
 import { printEntryTicket, printExitTicket, printSubscriptionReceipt } from './printer'
 import { getConfig, saveConfig } from './config'
 
@@ -90,10 +110,13 @@ app.whenReady().then(() => {
         return { success: false, message: 'Veículo já está no pátio!' }
       }
       const sub = dbOperations.getVehicleSubscription(placaNorm)
-      const isMensalistaDebtor = !!(sub?.isDebtor && sub?.planType?.startsWith('MENSAL'))
+      const subscriberDebtor = !!(
+        sub?.isDebtor &&
+        (sub?.planType?.startsWith('MENSAL') || sub?.planType === 'GARAGEM')
+      )
       const entrada = new Date().toISOString()
       const id = dbOperations.createTicket(placaNorm, tipo, entrada)
-      return { success: true, id, entrada, billedAsAvulso: isMensalistaDebtor }
+      return { success: true, id, entrada, billedAsAvulso: subscriberDebtor }
     } catch (error) {
       console.error('Erro ao criar ticket:', error)
       return { success: false, error: String(error) }
@@ -101,7 +124,7 @@ app.whenReady().then(() => {
   })
 
   function getFreeMinutesForTicket(placa: string, tipo: string): number {
-    if (tipo === 'MENSALISTA') {
+    if (tipo === 'MENSALISTA' || tipo === 'GARAGEM') {
       const sub = dbOperations.getVehicleSubscription(normalizePlate(placa))
       return sub ? sub.freeMinutes : 90
     }
@@ -113,7 +136,7 @@ app.whenReady().then(() => {
   }
 
   function usaControleDiario(tipo: string): boolean {
-    return tipo === 'Carro' || tipo === 'Moto' || tipo === 'MENSALISTA'
+    return tipo === 'Carro' || tipo === 'Moto' || tipo === 'MENSALISTA' || tipo === 'GARAGEM'
   }
 
   ipcMain.handle(
@@ -128,25 +151,26 @@ app.whenReady().then(() => {
         }
 
         const saida = new Date().toISOString()
-        const saidaDate = new Date(saida)
-        const dataStr = saidaDate.toISOString().slice(0, 10)
 
         const freeMinutes = getFreeMinutesForTicket(ticket.placa, ticket.tipo)
-        const dailyUsed = dbOperations.getDailyUsedMinutes(ticket.placa, dataStr)
         const aplicarPernoite = isAvulsoParaPernoite(ticket.tipo)
+        const getDailyForDate = (dateKey: string) =>
+          dbOperations.getDailyUsedMinutes(ticket.placa, dateKey)
         const valor = calcularValor(
           ticket.entrada,
           freeMinutes,
           saida,
-          dailyUsed,
+          getDailyForDate,
           aplicarPernoite
         )
 
         dbOperations.checkoutTicket(id, valor, saida)
 
         if (usaControleDiario(ticket.tipo) && freeMinutes < 999999) {
-          const minutos = minutosDaEstadia(ticket.entrada, saida)
-          dbOperations.addDailyUsedMinutes(ticket.placa, dataStr, minutos)
+          const segs = splitStayIntoLocalDaySegments(ticket.entrada, saida)
+          for (const seg of segs) {
+            dbOperations.addDailyUsedMinutes(ticket.placa, seg.dateKey, seg.minutes)
+          }
         }
 
         return { success: true, valor }
@@ -167,18 +191,18 @@ app.whenReady().then(() => {
         const tipo = data.tipo ?? 'Carro'
         const placa = data.placa ?? ''
         const freeMinutes =
-          tipo === 'MENSALISTA' && placa
+          (tipo === 'MENSALISTA' || tipo === 'GARAGEM') && placa
             ? (dbOperations.getVehicleSubscription(normalizePlate(placa))?.freeMinutes ?? 90)
             : 90
         const agora = new Date().toISOString()
-        const dataStr = new Date().toISOString().slice(0, 10)
-        const dailyUsed = placa ? dbOperations.getDailyUsedMinutes(placa, dataStr) : 0
+        const getDailyForDate = (dateKey: string) =>
+          placa ? dbOperations.getDailyUsedMinutes(placa, dateKey) : 0
         const aplicarPernoite = tipo === 'Carro' || tipo === 'Moto'
         const valor = calcularValor(
           data.entrada,
           freeMinutes,
           agora,
-          dailyUsed,
+          getDailyForDate,
           aplicarPernoite
         )
         return { valor }
@@ -250,6 +274,8 @@ app.whenReady().then(() => {
         plan_type: string
         expiry_date: string
         plates: string[]
+        garage_billing_day?: number | null
+        garage_billing_month?: number | null
       }
     ) => {
       try {
@@ -283,6 +309,8 @@ app.whenReady().then(() => {
         plan_type: string
         expiry_date: string
         plates: string[]
+        garage_billing_day?: number | null
+        garage_billing_month?: number | null
       }
     ) => {
       try {
@@ -476,7 +504,31 @@ app.whenReady().then(() => {
   )
 
   const EXCLUDE_TICKET_PASSWORD = 'Kefit2026'
+  const DELETE_CLIENT_PASSWORD = 'Kefit2026'
   const EXCLUDE_ALL_PASSWORD = 'murilo123@'
+
+  ipcMain.handle(
+    'delete-client',
+    (_event, data: { clientId: number; password: string }): { success: boolean; error?: string } => {
+      try {
+        if (data.password !== DELETE_CLIENT_PASSWORD) {
+          return { success: false, error: 'Senha incorreta.' }
+        }
+        const gate = dbOperations.clientHasActiveParkingTicket(data.clientId)
+        if (gate.blocked) {
+          return {
+            success: false,
+            error: `Não é possível excluir: existe veículo no pátio com ticket ativo (placa ${gate.plate ?? ''}). Dê saída ou exclua o ticket antes.`
+          }
+        }
+        dbOperations.deleteClientRecord(data.clientId)
+        return { success: true }
+      } catch (error) {
+        console.error('Erro ao excluir cliente:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
   ipcMain.handle(
     'exclude-ticket',
     (_event, data: { id: number; password: string }): { success: boolean; error?: string } => {

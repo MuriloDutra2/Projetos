@@ -50,6 +50,8 @@ const api = {
     plan_type: string
     expiry_date: string
     plates: string[]
+    garage_billing_day?: number | null
+    garage_billing_month?: number | null
   }) => ipcRenderer.invoke('create-client', data),
   updateClient: (data: {
     id: number
@@ -59,6 +61,8 @@ const api = {
     plan_type: string
     expiry_date: string
     plates: string[]
+    garage_billing_day?: number | null
+    garage_billing_month?: number | null
   }) => ipcRenderer.invoke('update-client', data),
   renewSubscription: (data: {
     clientId: number
@@ -79,6 +83,8 @@ const api = {
     ipcRenderer.invoke('save-printer-config', printerName),
   toggleClientStatus: (data: { clientId: number; active: number }) =>
     ipcRenderer.invoke('toggle-client-status', data),
+  deleteClient: (data: { clientId: number; password: string }) =>
+    ipcRenderer.invoke('delete-client', data),
   printSubscription: (data: {
     clientData: { name: string; cpf: string; phone: string }
     vehicleList: string[]

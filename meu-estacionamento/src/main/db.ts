@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { join } from 'path'
 import { app } from 'electron'
+import { effectiveBillingDayInMonth } from './garageDates'
 
 const dbPath =
   process.env.NODE_ENV === 'development'
@@ -76,6 +77,10 @@ ensureColumn('subscription_payments', 'competency_month', 'competency_month TEXT
 ensureColumn('subscription_payments', 'is_advance', 'is_advance INTEGER NOT NULL DEFAULT 0')
 ensureColumn('subscription_payments', 'notes', 'notes TEXT')
 
+ensureColumn('clients', 'garage_billing_day', 'garage_billing_day INTEGER')
+ensureColumn('clients', 'garage_billing_month', 'garage_billing_month INTEGER')
+ensureColumn('subscription_payments', 'payer_display_name', 'payer_display_name TEXT')
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS daily_reports (
     report_date TEXT PRIMARY KEY,
@@ -139,7 +144,7 @@ const stmts = {
   `),
 
   createClient: db.prepare(
-    'INSERT INTO clients (name, cpf, phone, plan_type, expiry_date, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)'
+    'INSERT INTO clients (name, cpf, phone, plan_type, expiry_date, active, created_at, garage_billing_day, garage_billing_month) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)'
   ),
   insertClientVehicle: db.prepare(
     'INSERT INTO client_vehicles (client_id, plate) VALUES (?, ?)'
@@ -163,7 +168,7 @@ const stmts = {
     WHERE client_id = ? AND competency_month IS NOT NULL
   `),
   getVehicleByPlate: db.prepare(
-    'SELECT cv.*, c.name, c.plan_type, c.expiry_date, c.active FROM client_vehicles cv JOIN clients c ON c.id = cv.client_id WHERE cv.plate = ?'
+    'SELECT cv.*, c.name, c.plan_type, c.expiry_date, c.active, c.garage_billing_day, c.garage_billing_month FROM client_vehicles cv JOIN clients c ON c.id = cv.client_id WHERE cv.plate = ?'
   ),
   updateClientExpiry: db.prepare(
     'UPDATE clients SET expiry_date = ?, active = 1 WHERE id = ?'
@@ -172,16 +177,20 @@ const stmts = {
     'UPDATE clients SET active = ? WHERE id = ?'
   ),
   updateClient: db.prepare(
-    'UPDATE clients SET name = ?, cpf = ?, phone = ?, plan_type = ?, expiry_date = ? WHERE id = ?'
+    'UPDATE clients SET name = ?, cpf = ?, phone = ?, plan_type = ?, expiry_date = ?, garage_billing_day = ?, garage_billing_month = ? WHERE id = ?'
   ),
   deleteClientVehicles: db.prepare('DELETE FROM client_vehicles WHERE client_id = ?'),
+  deleteClientById: db.prepare('DELETE FROM clients WHERE id = ?'),
+  updateSubscriptionPaymentsPayerDisplayName: db.prepare(
+    'UPDATE subscription_payments SET payer_display_name = ? WHERE client_id = ?'
+  ),
   insertSubscriptionPayment: db.prepare(
     'INSERT INTO subscription_payments (client_id, amount, plan_type, payment_date, new_expiry_date, payment_method, competency_month, is_advance, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   getFinancialHistory: db.prepare(`
-    SELECT sp.*, c.name as client_name
+    SELECT sp.*, COALESCE(c.name, sp.payer_display_name, 'Cliente removido') as client_name
     FROM subscription_payments sp
-    JOIN clients c ON c.id = sp.client_id
+    LEFT JOIN clients c ON c.id = sp.client_id
     ORDER BY sp.payment_date DESC
     LIMIT 200
   `),
@@ -208,7 +217,7 @@ const stmts = {
     WHERE client_id = ?
   `),
   getClientById: db.prepare(`
-    SELECT id, name, cpf, phone, plan_type, expiry_date, active
+    SELECT id, name, cpf, phone, plan_type, expiry_date, active, garage_billing_day, garage_billing_month
     FROM clients
     WHERE id = ?
     LIMIT 1
@@ -228,7 +237,7 @@ const stmts = {
   `),
   updateActiveTicketTypeByPlate: db.prepare(`
     UPDATE tickets
-    SET tipo = 'MENSALISTA'
+    SET tipo = ?
     WHERE status = 'ATIVO' AND placa = ?
   `),
   /** Total avulsos (valor) no dia. dateStr = YYYY-MM-DD */
@@ -261,6 +270,32 @@ const stmts = {
     INSERT INTO daily_free_usage (placa, data, minutos_usados) VALUES (?, ?, ?)
     ON CONFLICT(placa, data) DO UPDATE SET minutos_usados = minutos_usados + excluded.minutos_usados
   `)
+}
+
+export { effectiveBillingDayInMonth } from './garageDates'
+
+function competencyKeyFromDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+function isGaragemDebtorInternal(
+  clientId: number,
+  billingDay: number | null | undefined,
+  nowDate?: Date
+): boolean {
+  if (billingDay == null || billingDay < 1 || billingDay > 31) return false
+  const now = nowDate ?? new Date()
+  const due = effectiveBillingDayInMonth(now.getFullYear(), now.getMonth(), billingDay)
+  if (now.getDate() <= due) return false
+  const monthKey = competencyKeyFromDate(now)
+  const payment = stmts.hasPaymentInMonth.get(clientId, monthKey, monthKey)
+  return !payment
+}
+
+/** Tipo de ticket ativo conforme o plano do cliente. */
+export function ticketTipoForPlan(planType: string): string {
+  if (planType === 'GARAGEM') return 'GARAGEM'
+  return 'MENSALISTA'
 }
 
 /** Traduz erros do SQLite para mensagens em português para o usuário */
@@ -335,6 +370,8 @@ export const dbOperations = {
     plan_type: string
     expiry_date: string
     plates: string[]
+    garage_billing_day?: number | null
+    garage_billing_month?: number | null
   }) => {
     const createdAt = new Date().toISOString()
     const result = stmts.createClient.run(
@@ -343,7 +380,9 @@ export const dbOperations = {
       data.phone || '',
       data.plan_type,
       data.expiry_date,
-      createdAt
+      createdAt,
+      data.garage_billing_day ?? null,
+      data.garage_billing_month ?? null
     )
     const clientId = result.lastInsertRowid as number
     for (const plate of data.plates) {
@@ -364,7 +403,10 @@ export const dbOperations = {
       const exp = expiryDateOnly(r.expiry_date)
       const isExpired = exp < todayStr
       const isMensalista = typeof r.plan_type === 'string' && r.plan_type.startsWith('MENSAL')
-      const isDebtor = isMensalista ? dbOperations.isMensalistaDebtor(r.id, today) : false
+      const isGaragemPlan = r.plan_type === 'GARAGEM'
+      let isDebtor = false
+      if (isMensalista) isDebtor = dbOperations.isMensalistaDebtor(r.id, today)
+      else if (isGaragemPlan) isDebtor = isGaragemDebtorInternal(r.id, r.garage_billing_day, today)
       const latestPayment = stmts.getLatestPaymentByClientId.get(r.id) as any
       const currentCompetency = dbOperations.getCurrentCompetencyMonth(today)
       const paidCurrentCompetency = !!stmts.hasPaymentInMonth.get(r.id, currentCompetency, currentCompetency)
@@ -373,7 +415,18 @@ export const dbOperations = {
         if (today.getDate() > 10 && !paidCurrentCompetency) financialStatus = 'Em atraso'
         else if (today.getDate() === 10 && !paidCurrentCompetency) financialStatus = 'Vence hoje'
         else if (today.getDate() < 10 && !paidCurrentCompetency) financialStatus = 'A vencer'
+      } else if (isGaragemPlan && r.garage_billing_day != null) {
+        const due = effectiveBillingDayInMonth(today.getFullYear(), today.getMonth(), r.garage_billing_day)
+        if (today.getDate() > due && !paidCurrentCompetency) financialStatus = 'Em atraso'
+        else if (today.getDate() === due && !paidCurrentCompetency) financialStatus = 'Vence hoje'
+        else if (today.getDate() < due && !paidCurrentCompetency) financialStatus = 'A vencer'
       }
+      const garageBillingLabel =
+        isGaragemPlan && r.garage_billing_day != null && r.garage_billing_month != null
+          ? `${String(r.garage_billing_day).padStart(2, '0')}/${String(r.garage_billing_month).padStart(2, '0')}`
+          : isGaragemPlan && r.garage_billing_day != null
+            ? `${String(r.garage_billing_day).padStart(2, '0')}/—`
+            : null
       return {
         ...r,
         plates: r.plates ? r.plates.split(',') : [],
@@ -382,6 +435,7 @@ export const dbOperations = {
         lastPaymentDate: latestPayment?.payment_date ?? null,
         lastPaymentCompetency: latestPayment?.competency_month ?? null,
         financialStatus,
+        garageBillingLabel,
         status:
           r.active === 0 ? 'Inativo' : r.active === 1 && !isExpired ? 'Ativo' : 'Vencido'
       }
@@ -400,6 +454,8 @@ export const dbOperations = {
     plan_type: string
     expiry_date: string
     plates: string[]
+    garage_billing_day?: number | null
+    garage_billing_month?: number | null
   }) => {
     const updateTransaction = db.transaction(() => {
       stmts.updateClient.run(
@@ -408,6 +464,8 @@ export const dbOperations = {
         data.phone || '',
         data.plan_type,
         data.expiry_date,
+        data.garage_billing_day ?? null,
+        data.garage_billing_month ?? null,
         data.id
       )
       stmts.deleteClientVehicles.run(data.id)
@@ -433,6 +491,12 @@ export const dbOperations = {
     if (row.plan_type === 'FUNCIONARIO') freeMinutes = 720
     else if (row.plan_type === 'GARAGEM') freeMinutes = 999999
     else if (row.plan_type && row.plan_type.includes('MENSAL')) freeMinutes = 150
+    let isDebtor = false
+    if (row.plan_type?.startsWith('MENSAL')) {
+      isDebtor = dbOperations.isMensalistaDebtor(row.client_id)
+    } else if (row.plan_type === 'GARAGEM') {
+      isDebtor = isGaragemDebtorInternal(row.client_id, row.garage_billing_day)
+    }
     return {
       clientId: row.client_id,
       clientName: row.name,
@@ -440,10 +504,7 @@ export const dbOperations = {
       expiryDate: row.expiry_date,
       isExpired,
       freeMinutes,
-      isDebtor:
-        row.plan_type && row.plan_type.startsWith('MENSAL')
-          ? dbOperations.isMensalistaDebtor(row.client_id)
-          : false
+      isDebtor
     }
   },
 
@@ -532,7 +593,7 @@ export const dbOperations = {
     const months = Math.max(1, Math.floor(data.months || 1))
     let newExpiryStr = ''
 
-    if (data.planType.startsWith('MENSAL')) {
+    if (data.planType.startsWith('MENSAL') || data.planType === 'GARAGEM') {
       const maxCompRow = stmts.getMaxCompetencyByClientId.get(data.clientId) as { max_competency?: string } | undefined
       const currentComp = dbOperations.getCurrentCompetencyMonth(now)
       const startComp =
@@ -578,14 +639,45 @@ export const dbOperations = {
 
     stmts.updateClientExpiry.run(newExpiryStr, data.clientId)
     const clientVehicles = stmts.getClientVehiclesByClientId.all(data.clientId) as { plate: string }[]
+    const tipoAtivo = ticketTipoForPlan(data.planType)
     for (const v of clientVehicles) {
       const raw = (v.plate ?? '').replace(/[^A-Z0-9]/gi, '').toUpperCase()
-      if (raw) stmts.updateActiveTicketTypeByPlate.run(raw)
+      if (raw) stmts.updateActiveTicketTypeByPlate.run(tipoAtivo, raw)
     }
     return newExpiryStr
   },
 
   getFinancialHistory: () => stmts.getFinancialHistory.all(),
+
+  /** Bloqueia exclusão se alguma placa do cliente tiver ticket ATIVO no pátio. */
+  clientHasActiveParkingTicket: (clientId: number): { blocked: boolean; plate?: string } => {
+    const plates = stmts.getClientVehiclesByClientId.all(clientId) as { plate: string }[]
+    for (const { plate } of plates) {
+      const raw = (plate ?? '').replace(/[^A-Z0-9]/gi, '').toUpperCase()
+      if (!raw) continue
+      const row = stmts.getActiveByPlaca.get(raw) as { id: number } | undefined
+      if (row) return { blocked: true, plate: raw }
+    }
+    return { blocked: false }
+  },
+
+  /**
+   * Remove cadastro do cliente e veículos. Pagamentos e tickets finalizados permanecem para auditoria;
+   * `payer_display_name` guarda o nome para exibir no financeiro após remover o cliente.
+   */
+  deleteClientRecord: (clientId: number) => {
+    const cli = stmts.getClientById.get(clientId) as { name?: string } | undefined
+    if (!cli) throw new Error('Cliente não encontrado')
+    const name = cli.name ?? 'Cliente'
+    db.pragma('foreign_keys = OFF')
+    try {
+      stmts.updateSubscriptionPaymentsPayerDisplayName.run(name, clientId)
+      stmts.deleteClientVehicles.run(clientId)
+      stmts.deleteClientById.run(clientId)
+    } finally {
+      db.pragma('foreign_keys = ON')
+    }
+  },
 
   getFinancialSummaryByMethod: (month: number, year: number) => {
     const start = `${year}-${String(month).padStart(2, '0')}-01`

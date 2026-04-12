@@ -67,3 +67,22 @@ export function validateDate(dateString: string): boolean {
 export function unmask(value: string): string {
   return value.replace(/\D/g, '')
 }
+
+/** Máscara DD/MM (dia e mês da cobrança mensal garagem). */
+export function maskDdMm(value: string): string {
+  const d = value.replace(/\D/g, '').slice(0, 4)
+  if (d.length <= 2) return d
+  return `${d.slice(0, 2)}/${d.slice(2)}`
+}
+
+/** Interpreta DD/MM; valida calendário (ex. 31/04 inválido). */
+export function parseDdMm(value: string): { day: number; month: number } | null {
+  const raw = value.replace(/\D/g, '')
+  if (raw.length !== 4) return null
+  const day = parseInt(raw.slice(0, 2), 10)
+  const month = parseInt(raw.slice(2, 4), 10)
+  if (day < 1 || day > 31 || month < 1 || month > 12) return null
+  const test = new Date(2024, month - 1, day)
+  if (test.getMonth() !== month - 1 || test.getDate() !== day) return null
+  return { day, month }
+}

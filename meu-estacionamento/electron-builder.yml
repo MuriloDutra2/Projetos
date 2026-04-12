@@ -2,6 +2,8 @@ appId: com.kf.estacionamento
 productName: KF Estacionamento
 directories:
   buildResources: build
+  # Artefatos do electron-builder (setup .exe, win-unpacked, etc.)
+  output: dist
 files:
   - '!**/.vscode/*'
   - '!src/*'

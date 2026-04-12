@@ -49,8 +49,27 @@ declare global {
       }>
       checkPlateWasInToday: (placa: string) => Promise<boolean>
       getClients: () => Promise<any[]>
-      createClient: (data: { name: string; cpf: string; phone: string; plan_type: string; expiry_date: string; plates: string[] }) => Promise<{ success: boolean; id?: number; error?: string }>
-      updateClient: (data: { id: number; name: string; cpf: string; phone: string; plan_type: string; expiry_date: string; plates: string[] }) => Promise<{ success: boolean; error?: string }>
+      createClient: (data: {
+        name: string
+        cpf: string
+        phone: string
+        plan_type: string
+        expiry_date: string
+        plates: string[]
+        garage_billing_day?: number | null
+        garage_billing_month?: number | null
+      }) => Promise<{ success: boolean; id?: number; error?: string }>
+      updateClient: (data: {
+        id: number
+        name: string
+        cpf: string
+        phone: string
+        plan_type: string
+        expiry_date: string
+        plates: string[]
+        garage_billing_day?: number | null
+        garage_billing_month?: number | null
+      }) => Promise<{ success: boolean; error?: string }>
       renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
       getFinancialHistory: () => Promise<any[]>
       getFinancialSummaryByMethod: (data: { month: number; year: number }) => Promise<{ payment_method: string; total: number }[]>
@@ -75,6 +94,7 @@ declare global {
       getPrinterConfig: () => Promise<string>
       savePrinterConfig: (printerName: string) => Promise<{ success: boolean }>
       toggleClientStatus: (data: { clientId: number; active: number }) => Promise<{ success: boolean; error?: string }>
+      deleteClient: (data: { clientId: number; password: string }) => Promise<{ success: boolean; error?: string }>
       printSubscription: (data: {
         clientData: { name: string; cpf: string; phone: string }
         vehicleList: string[]

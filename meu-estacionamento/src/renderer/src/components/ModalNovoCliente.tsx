@@ -1,5 +1,15 @@
 import { useState, useEffect } from 'react'
-import { maskCPF, maskPhone, maskPlate, plateToRaw, unmask, validateDate, validatePlate } from '../utils/masks'
+import {
+  maskCPF,
+  maskDdMm,
+  maskPhone,
+  maskPlate,
+  parseDdMm,
+  plateToRaw,
+  unmask,
+  validateDate,
+  validatePlate
+} from '../utils/masks'
 import { friendlyError } from '../utils/errorHandler'
 
 const PLANOS = [
@@ -14,9 +24,13 @@ function defaultExpiryForPlan(planType: string): string {
   const d = new Date()
   if (planType.startsWith('MENSAL')) {
     d.setMonth(d.getMonth() + 1, 10)
-  } else {
-    d.setDate(d.getDate() + 30)
+    return d.toISOString().slice(0, 10)
   }
+  if (planType === 'GARAGEM') {
+    d.setFullYear(d.getFullYear() + 1)
+    return d.toISOString().slice(0, 10)
+  }
+  d.setDate(d.getDate() + 30)
   return d.toISOString().slice(0, 10)
 }
 
@@ -28,6 +42,8 @@ export interface ClientToEdit {
   plan_type: string
   expiry_date: string
   plates: string[]
+  garage_billing_day?: number | null
+  garage_billing_month?: number | null
 }
 
 interface ModalNovoClienteProps {
@@ -58,6 +74,7 @@ export default function ModalNovoCliente({
   const [planType, setPlanType] = useState<string>(PLANOS[0].value)
   const [expiryDate, setExpiryDate] = useState(() => defaultExpiryForPlan(PLANOS[0].value))
   const [plates, setPlates] = useState<string[]>([''])
+  const [garageBillingDdMm, setGarageBillingDdMm] = useState('')
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -72,6 +89,18 @@ export default function ModalNovoCliente({
         ? rawPlates.map((pl) => maskPlate(String(pl).trim()))
         : ['']
       setPlates(formatted)
+      if (
+        clientToEdit.garage_billing_day != null &&
+        clientToEdit.garage_billing_month != null
+      ) {
+        setGarageBillingDdMm(
+          maskDdMm(
+            `${String(clientToEdit.garage_billing_day).padStart(2, '0')}${String(clientToEdit.garage_billing_month).padStart(2, '0')}`
+          )
+        )
+      } else {
+        setGarageBillingDdMm('')
+      }
     } else if (open && !clientToEdit) {
       setName('')
       setCpf('')
@@ -80,6 +109,7 @@ export default function ModalNovoCliente({
       setPlanType(PLANOS[0].value)
       setExpiryDate(defaultExpiryForPlan(PLANOS[0].value))
       setPlates([''])
+      setGarageBillingDdMm('')
     }
   }, [open, clientToEdit])
 
@@ -133,6 +163,22 @@ export default function ModalNovoCliente({
       return
     }
 
+    let garageDay: number | null = null
+    let garageMonth: number | null = null
+    if (planType === 'GARAGEM') {
+      const parsed = parseDdMm(garageBillingDdMm)
+      if (!parsed) {
+        showAlert(
+          'Data de cobrança',
+          'Informe o dia e mês da cobrança mensal no formato DD/MM (ex.: 15/03).',
+          'error'
+        )
+        return
+      }
+      garageDay = parsed.day
+      garageMonth = parsed.month
+    }
+
     setLoading(true)
     try {
       const payload = {
@@ -141,7 +187,9 @@ export default function ModalNovoCliente({
         phone: unmask(phone),
         plan_type: planType,
         expiry_date: expiryDate.slice(0, 10),
-        plates: validPlates
+        plates: validPlates,
+        garage_billing_day: planType === 'GARAGEM' ? garageDay : null,
+        garage_billing_month: planType === 'GARAGEM' ? garageMonth : null
       }
       const result = isEdit && clientToEdit
         ? await window.api.updateClient({ ...payload, id: clientToEdit.id })
@@ -263,18 +311,40 @@ export default function ModalNovoCliente({
               ))}
             </select>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
-              Data de Vencimento
-            </label>
-            <input
-              type="date"
-              value={expiryDate}
-              onChange={(e) => setExpiryDate(e.target.value)}
-              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
-              required
-            />
-          </div>
+          {planType === 'GARAGEM' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Dia da cobrança mensal (DD/MM)
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={garageBillingDdMm}
+                onChange={(e) => setGarageBillingDdMm(maskDdMm(e.target.value))}
+                placeholder="ex.: 15/03"
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500"
+                maxLength={5}
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Todo mês a cobrança será controlada a partir deste dia (referência do primeiro pagamento).
+              </p>
+            </div>
+          )}
+          {planType !== 'GARAGEM' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Data de Vencimento
+              </label>
+              <input
+                type="date"
+                value={expiryDate}
+                onChange={(e) => setExpiryDate(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+                required
+              />
+            </div>
+          )}
           <div>
             <div className="flex justify-between items-center mb-2">
               <label className="block text-sm font-medium text-gray-300">Veículos (placas)</label>

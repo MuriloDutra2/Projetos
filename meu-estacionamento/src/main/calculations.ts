@@ -14,39 +14,72 @@ export function isPernoite(entrada: string, saida: string): boolean {
   return he >= 18 * 60 && hs <= 8 * 60
 }
 
+/** Chave YYYY-MM-DD do calendário local (ex.: Brasília no PC do estacionamento). */
+export function localDateKeyFromDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * Divide a estadia em segmentos por dia civil local (meia-noite local).
+ * Cada segmento recebe os minutos daquele dia para aplicar a cota diária de minutos grátis.
+ */
+export function splitStayIntoLocalDaySegments(entradaIso: string, saidaIso: string): { dateKey: string; minutes: number }[] {
+  const e = new Date(entradaIso)
+  const s = new Date(saidaIso)
+  if (!(s > e)) return []
+  const segments: { dateKey: string; minutes: number }[] = []
+  let t = new Date(e.getTime())
+  while (t < s) {
+    const y = t.getFullYear()
+    const mo = t.getMonth()
+    const d = t.getDate()
+    const dateKey = `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const nextDay = new Date(y, mo, d + 1, 0, 0, 0, 0)
+    const segmentEnd = s.getTime() < nextDay.getTime() ? s : nextDay
+    const mins = Math.floor((segmentEnd.getTime() - t.getTime()) / (60 * 1000))
+    if (mins > 0) segments.push({ dateKey, minutes: mins })
+    t = new Date(segmentEnd.getTime())
+  }
+  return segments
+}
+
+export type GetDailyUsedForDate = (dateKey: string) => number
+
 /**
  * Calcula o valor a ser cobrado baseado no tempo decorrido.
- * @param entrada - Data/hora de entrada (ISO string)
- * @param freeMinutes - Minutos grátis (default 90 avulso; 150 mensal; 720 funcionário; 999999 garagem)
- * @param saida - Data/hora de saída (opcional, para checkout)
- * @param dailyUsedMinutes - Minutos já usados no dia (controle anti-fraude)
+ * Cota diária: para estadias que cruzam meia-noite local, cada dia civil tem seu próprio
+ * saldo de minutos grátis (e uso já registrado em daily_free_usage naquela data).
+ * @param getDailyUsedForDate - minutos já usados na data local YYYY-MM-DD (anti-fraude)
  * @param aplicarPernoite - Se true e estadia 18h-08h, cobra R$50 fixo
- * Acima de freeMinutes: R$ 4,00 por hora (ou fração).
  */
 export function calcularValor(
   entrada: string,
   freeMinutes: number = 90,
-  saida?: string,
-  dailyUsedMinutes: number = 0,
+  saida: string | undefined,
+  getDailyUsedForDate: GetDailyUsedForDate,
   aplicarPernoite: boolean = false
 ): number {
   const saidaDate = saida ? new Date(saida) : new Date()
-  const entradaDate = new Date(entrada)
 
   if (aplicarPernoite && saida && isPernoite(entrada, saida)) {
     return 50
   }
 
-  const effectiveFree = Math.max(0, freeMinutes - dailyUsedMinutes)
-  const diffMs = saidaDate.getTime() - entradaDate.getTime()
-  const diffMinutos = Math.floor(diffMs / (1000 * 60))
+  const segments = splitStayIntoLocalDaySegments(entrada, saidaDate.toISOString())
+  if (segments.length === 0) return 0
 
-  if (diffMinutos <= effectiveFree) {
-    return 0
+  let totalBillable = 0
+  for (const seg of segments) {
+    const used = getDailyUsedForDate(seg.dateKey)
+    const effFree = Math.max(0, freeMinutes - used)
+    totalBillable += Math.max(0, seg.minutes - effFree)
   }
 
-  const minutosExtras = diffMinutos - effectiveFree
-  const horasExtras = Math.ceil(minutosExtras / 60)
+  if (totalBillable <= 0) return 0
+  const horasExtras = Math.ceil(totalBillable / 60)
   return horasExtras * 4
 }
 
