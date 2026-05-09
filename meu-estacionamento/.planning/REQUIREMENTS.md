@@ -75,41 +75,46 @@ Reconhecidos mas adiados — fora deste milestone, não aparecem no roadmap atua
 
 ## Traceability
 
-Inicialmente vazio — preenchido pelo `gsd-roadmapper` na criação do ROADMAP.md.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FAM-01 | TBD | Pending |
-| FAM-02 | TBD | Pending |
-| FAM-03 | TBD | Pending |
-| FAM-04 | TBD | Pending |
-| FAM-05 | TBD | Pending |
-| FAM-06 | TBD | Pending |
-| FAM-07 | TBD | Pending |
-| AUTH-01 | TBD | Pending |
-| AUTH-02 | TBD | Pending |
-| AUTH-03 | TBD | Pending |
-| AUTH-04 | TBD | Pending |
-| SEC-01 | TBD | Pending |
-| SEC-02 | TBD | Pending |
-| SEC-03 | TBD | Pending |
-| SEC-04 | TBD | Pending |
-| SEC-05 | TBD | Pending |
-| SEC-06 | TBD | Pending |
-| BAK-01 | TBD | Pending |
-| BAK-02 | TBD | Pending |
-| BAK-03 | TBD | Pending |
-| BAK-04 | TBD | Pending |
-| BAK-05 | TBD | Pending |
-| REF-01 | TBD | Pending |
-| REF-02 | TBD | Pending |
-| REF-03 | TBD | Pending |
+| FAM-01 | Phase 5 | Pending |
+| FAM-02 | Phase 5 | Pending |
+| FAM-03 | Phase 5 | Pending |
+| FAM-04 | Phase 5 | Pending |
+| FAM-05 | Phase 5 | Pending |
+| FAM-06 | Phase 5 | Pending |
+| FAM-07 | Phase 5 | Pending |
+| AUTH-01 | Phase 4 | Pending |
+| AUTH-02 | Phase 4 | Pending |
+| AUTH-03 | Phase 4 | Pending |
+| AUTH-04 | Phase 4 | Pending |
+| SEC-01 | Phase 2 | Pending |
+| SEC-02 | Phase 2 | Pending |
+| SEC-03 | Phase 2 | Pending |
+| SEC-04 | Phase 2 | Pending |
+| SEC-05 | Phase 2 | Pending |
+| SEC-06 | Phase 2 | Pending |
+| BAK-01 | Phase 3 | Pending |
+| BAK-02 | Phase 3 | Pending |
+| BAK-03 | Phase 3 | Pending |
+| BAK-04 | Phase 3 | Pending |
+| BAK-05 | Phase 3 | Pending |
+| REF-01 | Phase 1 | Pending |
+| REF-02 | Phase 1 | Pending |
+| REF-03 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 25 total
-- Mapped to phases: 0 (será preenchido pelo roadmapper)
-- Unmapped: 25 ⚠️ (resolvido após criação do ROADMAP.md)
+- Mapped to phases: 25
+- Unmapped: 0
+
+**Distribution:**
+- Phase 1 (Refatoração do Renderer): 3 requirements (REF-01..03)
+- Phase 2 (Saneamento do Repositório): 6 requirements (SEC-01..06)
+- Phase 3 (Backup e Restore Local): 5 requirements (BAK-01..05)
+- Phase 4 (Senhas Administrativas Configuráveis): 4 requirements (AUTH-01..04)
+- Phase 5 (Grupos Familiares e Tolerância por CPF): 7 requirements (FAM-01..07)
 
 ---
 *Requirements defined: 2026-05-09*
-*Last updated: 2026-05-09 after initial definition*
+*Last updated: 2026-05-09 after roadmap creation (traceability filled in)*
