@@ -28,8 +28,7 @@ import {
   getHistoryLast24h,
   getDailyReport,
   saveDailyReport,
-  exportDailyReportPdf,
-  getExcludedTickets
+  exportDailyReportPdf
 } from './services/reports'
 import { printEntry, printExit, getPrinters, getPrinterConfig, savePrinterConfig } from './services/printer'
 import { useDialog } from './providers/DialogProvider'
@@ -48,6 +47,7 @@ function formatPlatesDisplay(plates: string[]): { text: string; title: string } 
   return { text: `${visible} (+${extra})`, title: fullList }
 }
 import logoImg from './assets/logo.png'
+import Excluidos from './views/Excluidos'
 import ModalCheckout from './components/ModalCheckout'
 import ModalNovoCliente, { type ClientToEdit } from './components/ModalNovoCliente'
 import ModalRenovar from './components/ModalRenovar'
@@ -120,7 +120,6 @@ function App(): React.JSX.Element {
     planosVendidosValue: number
     saved: { qtyCars: number; qtyMotos: number; createdAt: string } | null
   } | null>(null)
-  const [excludedTickets, setExcludedTickets] = useState<{ id: number; placa: string; tipo: string; entrada: string; saida: string }[]>([])
   const [modalExcluirTodosOpen, setModalExcluirTodosOpen] = useState(false)
   const [excluirTodosPassword, setExcluirTodosPassword] = useState('')
   const [excluirTodosLoading, setExcluirTodosLoading] = useState(false)
@@ -149,9 +148,6 @@ function App(): React.JSX.Element {
     }
     if (view === 'relatorio') {
       getDailyReport(reportDay).then(setDailyReport)
-    }
-    if (view === 'excluidos') {
-      getExcludedTickets().then(setExcludedTickets)
     }
     if (view === 'mensalistas') loadClients()
     if (view === 'financeiro') {
@@ -1392,42 +1388,7 @@ function App(): React.JSX.Element {
         </div>
       )}
 
-      {view === 'excluidos' && (
-        <div className="flex-1 p-6 overflow-y-auto">
-          <h2 className="text-xl font-bold mb-6 text-white">Veículos excluídos</h2>
-          <p className="text-sm text-gray-400 mb-4">Lista de veículos removidos sem cobrança (exclusão mediante senha no modal de saída).</p>
-          <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-gray-700 bg-gray-700/50">
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Placa</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Tipo</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Entrada</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Data exclusão</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {excludedTickets.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhum veículo excluído</td>
-                    </tr>
-                  ) : (
-                    excludedTickets.map((t) => (
-                      <tr key={t.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                        <td className="px-4 py-3 font-medium text-white">{t.placa}</td>
-                        <td className="px-4 py-3 text-gray-300">{t.tipo}</td>
-                        <td className="px-4 py-3 text-gray-300">{format(new Date(t.entrada), 'dd/MM/yyyy HH:mm')}</td>
-                        <td className="px-4 py-3 text-gray-300">{t.saida ? format(new Date(t.saida), 'dd/MM/yyyy HH:mm') : '—'}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+      {view === 'excluidos' && <Excluidos />}
 
       {view === 'configuracoes' && (
         <div className="flex-1 p-6 overflow-y-auto">
