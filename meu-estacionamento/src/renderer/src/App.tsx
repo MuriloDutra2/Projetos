@@ -30,7 +30,7 @@ import {
   saveDailyReport,
   exportDailyReportPdf
 } from './services/reports'
-import { printEntry, printExit, getPrinters, getPrinterConfig, savePrinterConfig } from './services/printer'
+import { printEntry, printExit } from './services/printer'
 import { useDialog } from './providers/DialogProvider'
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -48,6 +48,7 @@ function formatPlatesDisplay(plates: string[]): { text: string; title: string } 
 }
 import logoImg from './assets/logo.png'
 import Excluidos from './views/Excluidos'
+import Configuracoes from './views/Configuracoes'
 import ModalCheckout from './components/ModalCheckout'
 import ModalNovoCliente, { type ClientToEdit } from './components/ModalNovoCliente'
 import ModalRenovar from './components/ModalRenovar'
@@ -93,8 +94,6 @@ function App(): React.JSX.Element {
 
   const [modalNovoClienteOpen, setModalNovoClienteOpen] = useState(false)
   const [clientToEdit, setClientToEdit] = useState<ClientToEdit | null>(null)
-  const [printers, setPrinters] = useState<{ name: string; displayName: string }[]>([])
-  const [selectedPrinter, setSelectedPrinter] = useState('')
   const [financeFilterMonth, setFinanceFilterMonth] = useState(() => new Date().getMonth() + 1)
   const [financeFilterYear, setFinanceFilterYear] = useState(() => new Date().getFullYear())
   const [modalRenovarOpen, setModalRenovarOpen] = useState(false)
@@ -155,10 +154,6 @@ function App(): React.JSX.Element {
       loadFinancialHistory()
       getFinancialSummaryByMethod({ month: financeFilterMonth, year: financeFilterYear })
         .then(setFinancialByMethod)
-    }
-    if (view === 'configuracoes') {
-      getPrinters().then(setPrinters)
-      getPrinterConfig().then(setSelectedPrinter)
     }
   }, [view, historyDay, reportDay, historicoFiltro24h, financeFilterMonth, financeFilterYear])
 
@@ -1390,39 +1385,7 @@ function App(): React.JSX.Element {
 
       {view === 'excluidos' && <Excluidos />}
 
-      {view === 'configuracoes' && (
-        <div className="flex-1 p-6 overflow-y-auto">
-          <h2 className="text-xl font-bold mb-6 text-white">Configurações</h2>
-          <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-md">
-            <h3 className="text-lg font-medium text-white mb-4">Impressora</h3>
-            <p className="text-sm text-gray-400 mb-4">
-              Selecione a impressora térmica para tickets e recibos. Se não selecionar, será usada a impressora padrão do sistema.
-            </p>
-            <select
-              value={selectedPrinter}
-              onChange={(e) => setSelectedPrinter(e.target.value)}
-              className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-4"
-            >
-              <option value="">Impressora padrão do sistema</option>
-              {printers.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.displayName || p.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={async () => {
-                await savePrinterConfig(selectedPrinter)
-                showAlert('Salvo', 'Configuração de impressora atualizada.', 'success')
-              }}
-              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium text-white"
-            >
-              Salvar
-            </button>
-          </div>
-        </div>
-      )}
+      {view === 'configuracoes' && <Configuracoes />}
 
       <ModalCheckout
         open={modalOpen}
