@@ -100,6 +100,8 @@ declare global {
         vehicleList: string[]
         planData: { planName: string; value: number; expiryDate: string }
       }) => Promise<{ success: boolean; error?: string }>
+      printEntry: (data: { id: number; placa: string; entrada: string }) => Promise<{ success: boolean; error?: string }>
+      printExit: (data: { placa: string; entrada: string; saida: string; valor: number; tempoTotal: string }) => Promise<{ success: boolean; error?: string }>
     }
   }
 }

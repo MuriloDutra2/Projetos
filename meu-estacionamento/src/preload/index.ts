@@ -89,7 +89,11 @@ const api = {
     clientData: { name: string; cpf: string; phone: string }
     vehicleList: string[]
     planData: { planName: string; value: number; expiryDate: string }
-  }) => ipcRenderer.invoke('print-subscription', data)
+  }) => ipcRenderer.invoke('print-subscription', data),
+  printEntry: (data: { id: number; placa: string; entrada: string }) =>
+    ipcRenderer.invoke('print-entry', data),
+  printExit: (data: { placa: string; entrada: string; saida: string; valor: number; tempoTotal: string }) =>
+    ipcRenderer.invoke('print-exit', data)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
