@@ -1,6 +1,38 @@
 import { useState, useEffect, useCallback } from 'react'
 import { format, differenceInMinutes, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns'
 import { clsx } from 'clsx'
+import type { Ticket, HistoryEntry, ClientRow, SubscriptionInfo, ClientStatement, View } from './types/domain'
+import {
+  getTickets,
+  createTicket,
+  checkoutTicket as checkoutTicketService,
+  calculateValue,
+  checkPlateSubscription,
+  checkPlateWasInToday,
+  excludeAllActiveTickets
+} from './services/tickets'
+import {
+  getClients,
+  toggleClientStatus,
+  deleteClient,
+  getClientStatement
+} from './services/clients'
+import {
+  getFinancialHistory,
+  getFinancialSummaryByMethod,
+  exportFinancialCsv
+} from './services/financial'
+import {
+  getHistory,
+  getHistoryForDay,
+  getHistoryLast24h,
+  getDailyReport,
+  saveDailyReport,
+  exportDailyReportPdf,
+  getExcludedTickets
+} from './services/reports'
+import { printEntry, printExit, getPrinters, getPrinterConfig, savePrinterConfig } from './services/printer'
+import { useDialog } from './providers/DialogProvider'
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
@@ -19,73 +51,10 @@ import logoImg from './assets/logo.png'
 import ModalCheckout from './components/ModalCheckout'
 import ModalNovoCliente, { type ClientToEdit } from './components/ModalNovoCliente'
 import ModalRenovar from './components/ModalRenovar'
-import AlertModal from './components/AlertModal'
 import { maskPlate, plateToRaw } from './utils/masks'
 import { friendlyError } from './utils/errorHandler'
 import { useBarcodeScanner } from './hooks/useBarcodeScanner'
 
-interface Ticket {
-  id: number
-  placa: string
-  tipo: string
-  entrada: string
-  status: string
-}
-
-interface HistoryEntry {
-  id: number
-  placa: string
-  tipo: string
-  entrada: string
-  saida: string
-  valor: number
-}
-
-interface ClientRow {
-  id: number
-  name: string
-  cpf?: string
-  phone?: string
-  plan_type: string
-  expiry_date: string
-  status: string
-  plates: string[]
-  isExpired: boolean
-  isDebtor?: boolean
-  lastPaymentDate?: string | null
-  lastPaymentCompetency?: string | null
-  financialStatus?: 'Em dia' | 'Vence hoje' | 'A vencer' | 'Em atraso' | string
-  garage_billing_day?: number | null
-  garage_billing_month?: number | null
-  garageBillingLabel?: string | null
-}
-
-interface SubscriptionInfo {
-  isSubscriber: boolean
-  clientName: string
-  planType: string
-  isExpired: boolean
-  expiryDate: string
-  freeMinutes: number
-  isDebtor?: boolean
-  clientId?: number
-}
-
-interface ClientStatement {
-  client: { id: number; name: string; plan_type: string }
-  payments: {
-    id: number
-    amount: number
-    payment_date: string
-    payment_method: string
-    competency_month?: string | null
-    is_advance: number
-  }[]
-  avulsoWhileDebtor: { id: number; placa: string; saida: string; valor: number }[]
-  totals: { payments: number; avulsos: number }
-}
-
-type View = 'inicio' | 'historico' | 'relatorio' | 'mensalistas' | 'financeiro' | 'excluidos' | 'configuracoes'
 
 function planLabel(planType: string): string {
   if (planType === 'MENSAL_CARRO') return 'Mensal Carro (2h30)'
@@ -97,6 +66,8 @@ function planLabel(planType: string): string {
 }
 
 function App(): React.JSX.Element {
+  const { showAlert, showConfirm } = useDialog()
+
   const competenciaLabel = (competency?: string | null) => {
     if (!competency) return '—'
     const [y, m] = competency.split('-')
@@ -150,18 +121,6 @@ function App(): React.JSX.Element {
     saved: { qtyCars: number; qtyMotos: number; createdAt: string } | null
   } | null>(null)
   const [excludedTickets, setExcludedTickets] = useState<{ id: number; placa: string; tipo: string; entrada: string; saida: string }[]>([])
-  const [alertState, setAlertState] = useState<{
-    open: boolean
-    title: string
-    message: string
-    type: 'error' | 'success'
-  }>({ open: false, title: '', message: '', type: 'error' })
-  const [confirmState, setConfirmState] = useState<{
-    open: boolean
-    title: string
-    message: string
-    onConfirm: () => void
-  }>({ open: false, title: '', message: '', onConfirm: () => {} })
   const [modalExcluirTodosOpen, setModalExcluirTodosOpen] = useState(false)
   const [excluirTodosPassword, setExcluirTodosPassword] = useState('')
   const [excluirTodosLoading, setExcluirTodosLoading] = useState(false)
@@ -183,28 +142,27 @@ function App(): React.JSX.Element {
   useEffect(() => {
     if (view === 'historico') {
       if (historicoFiltro24h) {
-        window.api.getHistoryLast24h().then(setHistoryLast24h)
+        getHistoryLast24h().then(setHistoryLast24h)
       } else {
-        window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
+        getHistoryForDay(historyDay).then(setHistoryForDay)
       }
     }
     if (view === 'relatorio') {
-      window.api.getDailyReport(reportDay).then(setDailyReport)
+      getDailyReport(reportDay).then(setDailyReport)
     }
     if (view === 'excluidos') {
-      window.api.getExcludedTickets().then(setExcludedTickets)
+      getExcludedTickets().then(setExcludedTickets)
     }
     if (view === 'mensalistas') loadClients()
     if (view === 'financeiro') {
       loadHistory()
       loadFinancialHistory()
-      window.api
-        .getFinancialSummaryByMethod({ month: financeFilterMonth, year: financeFilterYear })
+      getFinancialSummaryByMethod({ month: financeFilterMonth, year: financeFilterYear })
         .then(setFinancialByMethod)
     }
     if (view === 'configuracoes') {
-      window.api.getPrinters().then(setPrinters)
-      window.api.getPrinterConfig().then(setSelectedPrinter)
+      getPrinters().then(setPrinters)
+      getPrinterConfig().then(setSelectedPrinter)
     }
   }, [view, historyDay, reportDay, historicoFiltro24h, financeFilterMonth, financeFilterYear])
 
@@ -216,9 +174,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (confirmState.open) setConfirmState((s) => ({ ...s, open: false }))
-        else if (alertState.open) setAlertState((s) => ({ ...s, open: false }))
-        else if (modalOpen && !checkoutLoading) {
+        if (modalOpen && !checkoutLoading) {
           setModalOpen(false)
           setCheckoutTicket(null)
         } else if (modalNovoClienteOpen) {
@@ -239,11 +195,11 @@ function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [confirmState.open, alertState.open, modalOpen, modalNovoClienteOpen, renovarClient, view, checkoutLoading])
+  }, [modalOpen, modalNovoClienteOpen, renovarClient, view, checkoutLoading])
 
   const loadTickets = async () => {
     try {
-      const data = await window.api.getTickets()
+      const data = await getTickets()
       setTickets(data)
     } catch (e) {
       console.error(e)
@@ -252,7 +208,7 @@ function App(): React.JSX.Element {
 
   const loadHistory = async () => {
     try {
-      const data = await window.api.getHistory()
+      const data = await getHistory()
       setHistory(data)
     } catch (e) {
       console.error(e)
@@ -261,7 +217,7 @@ function App(): React.JSX.Element {
 
   const loadClients = async () => {
     try {
-      const data = await window.api.getClients()
+      const data = await getClients()
       setClients(data)
     } catch (e) {
       console.error(e)
@@ -272,7 +228,7 @@ function App(): React.JSX.Element {
 
   const loadFinancialHistory = async () => {
     try {
-      const data = await window.api.getFinancialHistory()
+      const data = await getFinancialHistory()
       setFinancialHistory(data)
     } catch (e) {
       console.error(e)
@@ -290,8 +246,8 @@ function App(): React.JSX.Element {
     if (placa.length < 5) return
     try {
       const [info, wasInToday] = await Promise.all([
-        window.api.checkPlateSubscription(placa),
-        placa.length >= 7 ? window.api.checkPlateWasInToday(placa) : Promise.resolve(false)
+        checkPlateSubscription(placa),
+        placa.length >= 7 ? checkPlateWasInToday(placa) : Promise.resolve(false)
       ])
       setSubscriptionInfo(info)
       setPlateWasInToday(placa.length >= 7 ? wasInToday : null)
@@ -307,7 +263,7 @@ function App(): React.JSX.Element {
       return
     }
     const t = setTimeout(() => {
-      window.api.checkPlateWasInToday(placa).then(setPlateWasInToday).catch(() => setPlateWasInToday(null))
+      checkPlateWasInToday(placa).then(setPlateWasInToday).catch(() => setPlateWasInToday(null))
     }, 300)
     return () => clearTimeout(t)
   }, [placa, view])
@@ -318,7 +274,7 @@ function App(): React.JSX.Element {
 
   const handleCheckoutClick = async (ticket: Ticket) => {
     try {
-      const res = await window.api.calculateValue({
+      const res = await calculateValue({
         entrada: ticket.entrada,
         placa: ticket.placa,
         tipo: ticket.tipo
@@ -335,7 +291,7 @@ function App(): React.JSX.Element {
     if (!checkoutTicket) return
     setCheckoutLoading(true)
     try {
-      const result = await window.api.checkoutTicket({ id: checkoutTicket.id })
+      const result = await checkoutTicketService({ id: checkoutTicket.id })
       if (result.success) {
         const valorCobrado = result.valor ?? checkoutValor
         if (valorCobrado > 0 && checkoutTicket.tipo !== 'GARAGEM') {
@@ -343,7 +299,7 @@ function App(): React.JSX.Element {
             const saida = new Date().toISOString()
             const minutos = differenceInMinutes(new Date(), new Date(checkoutTicket.entrada))
             const tempoTotal = minutos < 60 ? `${minutos} min` : `${Math.floor(minutos / 60)}h ${minutos % 60}min`
-            const printRes = await window.electron.ipcRenderer.invoke('print-exit', {
+            const printRes = await printExit({
               placa: checkoutTicket.placa,
               entrada: checkoutTicket.entrada,
               saida,
@@ -362,8 +318,8 @@ function App(): React.JSX.Element {
         setCheckoutTicket(null)
         await loadTickets()
         if (view === 'historico') {
-          if (historicoFiltro24h) window.api.getHistoryLast24h().then(setHistoryLast24h)
-          else window.api.getHistoryForDay(historyDay).then(setHistoryForDay)
+          if (historicoFiltro24h) getHistoryLast24h().then(setHistoryLast24h)
+          else getHistoryForDay(historyDay).then(setHistoryForDay)
         }
         if (view === 'financeiro') {
           await loadHistory()
@@ -422,12 +378,8 @@ function App(): React.JSX.Element {
     ? mixedTransactionsAll.filter((t) => inMonth(t.date))
     : mixedTransactionsAll
 
-  const showAlert = (title: string, message: string, type: 'error' | 'success') => {
-    setAlertState({ open: true, title, message, type })
-  }
-
   const registerEntryWithType = async (plate: string, typeToSave: string) => {
-    const result = await window.api.createTicket({
+    const result = await createTicket({
       placa: plate.toUpperCase(),
       tipo: typeToSave
     })
@@ -437,8 +389,8 @@ function App(): React.JSX.Element {
       setPlateWasInToday(null)
       if (typeToSave !== 'GARAGEM') {
         try {
-          const printRes = await window.electron.ipcRenderer.invoke('print-entry', {
-            id: result.id,
+          const printRes = await printEntry({
+            id: result.id!,
             placa: plate.toUpperCase(),
             entrada: result.entrada ?? new Date().toISOString()
           })
@@ -468,7 +420,7 @@ function App(): React.JSX.Element {
       try {
         let tipoToSave: string = tipo
         if (plateToRaw(placa).length >= 7) {
-          const info = await window.api.checkPlateSubscription(placa)
+          const info = await checkPlateSubscription(placa)
           if (info?.isSubscriber && !info?.isExpired) {
             if (
               info?.isDebtor &&
@@ -551,16 +503,15 @@ function App(): React.JSX.Element {
         })
 
   const openCancelConfirm = (c: ClientRow) => {
-    setConfirmState({
-      open: true,
-      title: 'Cancelar plano',
-      message: `Deseja cancelar o plano de ${c.name}? O cliente perderá o acesso imediato.`,
-      onConfirm: async () => {
-        const res = await window.api.toggleClientStatus({ clientId: c.id, active: 0 })
+    showConfirm(
+      'Cancelar plano',
+      `Deseja cancelar o plano de ${c.name}? O cliente perderá o acesso imediato.`,
+      async () => {
+        const res = await toggleClientStatus({ clientId: c.id, active: 0 })
         if (res.success) loadClients()
         else showAlert('Erro', friendlyError(res.error ?? 'Não foi possível cancelar'), 'error')
       }
-    })
+    )
   }
 
   const openEditarCliente = (c: ClientRow) => {
@@ -579,16 +530,15 @@ function App(): React.JSX.Element {
   }
 
   const openReativarConfirm = (c: ClientRow) => {
-    setConfirmState({
-      open: true,
-      title: 'Reativar cliente',
-      message: `Deseja reativar o plano de ${c.name}?`,
-      onConfirm: async () => {
-        const res = await window.api.toggleClientStatus({ clientId: c.id, active: 1 })
+    showConfirm(
+      'Reativar cliente',
+      `Deseja reativar o plano de ${c.name}?`,
+      async () => {
+        const res = await toggleClientStatus({ clientId: c.id, active: 1 })
         if (res.success) loadClients()
         else showAlert('Erro', friendlyError(res.error ?? 'Não foi possível reativar'), 'error')
       }
-    })
+    )
   }
 
   return (
@@ -1073,10 +1023,10 @@ function App(): React.JSX.Element {
                 <button
                   type="button"
                   onClick={async () => {
-                    const report = await window.api.getDailyReport(reportDay)
+                    const report = await getDailyReport(reportDay)
                     const qtyCars = tickets.filter((t) => t.tipo === 'Carro').length
                     const qtyMotos = tickets.filter((t) => t.tipo === 'Moto').length
-                    const res = await window.api.saveDailyReport({
+                    const res = await saveDailyReport({
                       dateStr: reportDay,
                       totalAvulsos: report.totalAvulsos,
                       planosVendidosCount: report.planosVendidosCount,
@@ -1086,7 +1036,7 @@ function App(): React.JSX.Element {
                     })
                     if (res.success) {
                       showAlert('Salvo', 'Relatório do dia salvo com sucesso.', 'success')
-                      window.api.getDailyReport(reportDay).then(setDailyReport)
+                      getDailyReport(reportDay).then(setDailyReport)
                     } else {
                       showAlert('Erro', friendlyError(res.error ?? 'Erro ao salvar'), 'error')
                     }
@@ -1100,7 +1050,7 @@ function App(): React.JSX.Element {
                   type="button"
                   onClick={async () => {
                     if (!dailyReport) return
-                    const res = await window.api.exportDailyReportPdf({
+                    const res = await exportDailyReportPdf({
                       dateStr: reportDay,
                       totalAvulsos: dailyReport.totalAvulsos,
                       planosVendidosCount: dailyReport.planosVendidosCount,
@@ -1245,7 +1195,7 @@ function App(): React.JSX.Element {
                           <button
                             type="button"
                             onClick={async () => {
-                              const data = await window.api.getClientStatement(c.id)
+                              const data = await getClientStatement(c.id)
                               setStatementData(data as ClientStatement | null)
                               setStatementOpen(true)
                             }}
@@ -1366,7 +1316,7 @@ function App(): React.JSX.Element {
             <button
               type="button"
               onClick={async () => {
-                const res = await window.api.exportFinancialCsv()
+                const res = await exportFinancialCsv()
                 if (res.success && res.path) showAlert('Exportado', `Arquivo salvo em ${res.path}`, 'success')
                 else if (!res.canceled && res.error) showAlert('Erro', friendlyError(res.error), 'error')
               }}
@@ -1502,7 +1452,7 @@ function App(): React.JSX.Element {
             <button
               type="button"
               onClick={async () => {
-                await window.api.savePrinterConfig(selectedPrinter)
+                await savePrinterConfig(selectedPrinter)
                 showAlert('Salvo', 'Configuração de impressora atualizada.', 'success')
               }}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium text-white"
@@ -1524,7 +1474,6 @@ function App(): React.JSX.Element {
         onConfirm={handleCheckoutConfirm}
         onExclude={async () => {
           await loadTickets()
-          if (view === 'excluidos') window.api.getExcludedTickets().then(setExcludedTickets)
         }}
         ticketId={checkoutTicket?.id}
         placa={checkoutTicket?.placa ?? ''}
@@ -1560,25 +1509,6 @@ function App(): React.JSX.Element {
         />
       )}
 
-      <AlertModal
-        isOpen={alertState.open}
-        title={alertState.title}
-        message={alertState.message}
-        type={alertState.type}
-        onClose={() => setAlertState((s) => ({ ...s, open: false }))}
-      />
-
-      <AlertModal
-        isOpen={confirmState.open}
-        title={confirmState.title}
-        message={confirmState.message}
-        type="error"
-        onClose={() => setConfirmState((s) => ({ ...s, open: false }))}
-        confirmMode
-        onConfirm={confirmState.onConfirm}
-        confirmLabel="Confirmar"
-      />
-
       {modalExcluirTodosOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => !excluirTodosLoading && setModalExcluirTodosOpen(false)}>
           <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 shadow-xl max-w-sm w-full mx-4" onClick={(e) => e.stopPropagation()}>
@@ -1608,13 +1538,12 @@ function App(): React.JSX.Element {
                   setExcluirTodosError('')
                   setExcluirTodosLoading(true)
                   try {
-                    const res = await window.api.excludeAllActiveTickets({ password: excluirTodosPassword })
+                    const res = await excludeAllActiveTickets({ password: excluirTodosPassword })
                     if (res.success) {
                       setModalExcluirTodosOpen(false)
                       setExcluirTodosPassword('')
                       showAlert('Sucesso', 'Todos os veículos foram removidos do pátio.', 'success')
                       await loadTickets()
-                      window.api.getExcludedTickets().then(setExcludedTickets)
                     } else {
                       setExcluirTodosError(res.error ?? 'Senha incorreta.')
                     }
@@ -1677,7 +1606,7 @@ function App(): React.JSX.Element {
                   setDeleteClientLoading(true)
                   setDeleteClientError('')
                   try {
-                    const res = await window.api.deleteClient({
+                    const res = await deleteClient({
                       clientId: deleteClientModal.id,
                       password: deleteClientPassword
                     })
