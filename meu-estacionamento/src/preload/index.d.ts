@@ -36,7 +36,7 @@ declare global {
       }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
       createTicket: (data: { placa: string; tipo: string; cpf?: string }) => Promise<{ success: boolean; id?: number; entrada?: string; billedAsAvulso?: boolean; error?: string; message?: string }>
       checkoutTicket: (data: { id: number }) => Promise<{ success: boolean; valor?: number; error?: string }>
-      calculateValue: (data: { entrada: string; placa?: string; tipo?: string }) => Promise<{ valor: number }>
+      calculateValue: (data: { entrada: string; placa?: string; tipo?: string; cpf?: string }) => Promise<{ valor: number }>
       checkPlateSubscription: (placa: string) => Promise<{
         isSubscriber: boolean
         clientId?: number

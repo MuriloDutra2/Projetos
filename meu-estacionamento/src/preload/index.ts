@@ -37,6 +37,7 @@ const api = {
     entrada: string
     placa?: string
     tipo?: string
+    cpf?: string
   }) => ipcRenderer.invoke('calculate-value', data),
   checkPlateSubscription: (placa: string) =>
     ipcRenderer.invoke('check-plate-subscription', placa),

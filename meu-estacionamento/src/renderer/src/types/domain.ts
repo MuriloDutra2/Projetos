@@ -4,6 +4,7 @@ export interface Ticket {
   tipo: string
   entrada: string
   status: string
+  cpf?: string | null
 }
 
 export interface HistoryEntry {

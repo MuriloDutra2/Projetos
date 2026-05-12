@@ -101,6 +101,7 @@ app.whenReady().then(() => {
   })
 
   const normalizePlate = (p: string) => p.replace(/[^A-Z0-9]/gi, '').toUpperCase()
+  const normalizeCpf = (c?: string) => (c ? c.replace(/\D/g, '') : undefined)
 
   ipcMain.handle('create-ticket', (_event, { placa, tipo, cpf }: { placa: string; tipo: string; cpf?: string }) => {
     try {
@@ -115,7 +116,8 @@ app.whenReady().then(() => {
         (sub?.planType?.startsWith('MENSAL') || sub?.planType === 'GARAGEM')
       )
       const entrada = new Date().toISOString()
-      const id = dbOperations.createTicket(placaNorm, tipo, entrada, cpf)
+      const cpfNorm = normalizeCpf(cpf)
+      const id = dbOperations.createTicket(placaNorm, tipo, entrada, cpfNorm)
       return { success: true, id, entrada, billedAsAvulso: subscriberDebtor }
     } catch (error) {
       console.error('Erro ao criar ticket:', error)
@@ -154,7 +156,8 @@ app.whenReady().then(() => {
 
         const freeMinutes = getFreeMinutesForTicket(ticket.placa, ticket.tipo)
         const aplicarPernoite = isAvulsoParaPernoite(ticket.tipo)
-        const usageKey = (ticket as any).cpf ?? ticket.placa
+        const ticketCpf = normalizeCpf((ticket as any).cpf)
+        const usageKey = ticketCpf ?? ticket.placa
         const getDailyForDate = (dateKey: string) =>
           dbOperations.getDailyUsedMinutes(usageKey, dateKey)
         const valor = calcularValor(
@@ -186,18 +189,20 @@ app.whenReady().then(() => {
     'calculate-value',
     (
       _event,
-      data: { entrada: string; placa?: string; tipo?: string }
+      data: { entrada: string; placa?: string; tipo?: string; cpf?: string }
     ) => {
       try {
         const tipo = data.tipo ?? 'Carro'
         const placa = data.placa ?? ''
+        const cpfNorm = normalizeCpf(data.cpf)
+        const usageKey = cpfNorm ?? placa
         const freeMinutes =
           (tipo === 'MENSALISTA' || tipo === 'GARAGEM') && placa
             ? (dbOperations.getVehicleSubscription(normalizePlate(placa))?.freeMinutes ?? 90)
             : 90
         const agora = new Date().toISOString()
         const getDailyForDate = (dateKey: string) =>
-          placa ? dbOperations.getDailyUsedMinutes(placa, dateKey) : 0
+          usageKey ? dbOperations.getDailyUsedMinutes(usageKey, dateKey) : 0
         const aplicarPernoite = tipo === 'Carro' || tipo === 'Moto'
         const valor = calcularValor(
           data.entrada,
@@ -762,24 +767,44 @@ app.whenReady().then(() => {
 
   ipcMain.handle('add-family-member', (_event, { groupId, name, cpf }: { groupId: number; name: string; cpf: string }) => {
     try {
+      const cpfDigits = (cpf ?? '').replace(/\D/g, '')
+      if (cpfDigits.length !== 11) {
+        return { success: false, error: 'CPF inválido (deve ter 11 dígitos).' }
+      }
       const result = dbOperations.addFamilyMember(groupId, name, cpf)
       return { success: true, id: result.id }
     } catch (error) {
-      return { success: false, error: String(error) }
+      const msg = String(error)
+      if (msg.includes('UNIQUE') || msg.includes('idx_family_members_group_cpf')) {
+        return { success: false, error: 'Esse CPF já está cadastrado neste grupo.' }
+      }
+      return { success: false, error: msg }
     }
   })
 
   ipcMain.handle('update-family-member', (_event, { memberId, name, cpf }: { memberId: number; name: string; cpf: string }) => {
     try {
+      const cpfDigits = (cpf ?? '').replace(/\D/g, '')
+      if (cpfDigits.length !== 11) {
+        return { success: false, error: 'CPF inválido (deve ter 11 dígitos).' }
+      }
       dbOperations.updateFamilyMember(memberId, name, cpf)
       return { success: true }
     } catch (error) {
-      return { success: false, error: String(error) }
+      const msg = String(error)
+      if (msg.includes('UNIQUE') || msg.includes('idx_family_members_group_cpf')) {
+        return { success: false, error: 'Esse CPF já está cadastrado neste grupo.' }
+      }
+      return { success: false, error: msg }
     }
   })
 
   ipcMain.handle('delete-family-member', (_event, memberId: number) => {
     try {
+      const block = dbOperations.memberHasActiveTicket(memberId)
+      if (block.blocked) {
+        return { success: false, error: 'Este membro possui veículo no pátio. Finalize a saída antes de remover.' }
+      }
       dbOperations.deleteFamilyMember(memberId)
       return { success: true }
     } catch (error) {
