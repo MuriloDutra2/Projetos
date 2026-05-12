@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { clsx } from 'clsx'
 import type { View } from './types/domain'
 import Inicio from './views/Inicio'
@@ -15,9 +15,13 @@ function App(): React.JSX.Element {
   const [view, setView] = useState<View>('inicio')
   const mensalistasRef = useRef<MensalistasHandle>(null)
 
+  const handleCtrlN = useCallback(() => {
+    mensalistasRef.current?.openNewClientModal()
+  }, []) // mensalistasRef is a stable ref object
+
   useGlobalShortcuts({
     view,
-    onCtrlN: () => mensalistasRef.current?.openNewClientModal()
+    onCtrlN: handleCtrlN
   })
 
   return (
