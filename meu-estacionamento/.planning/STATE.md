@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 1, Plan 01-03 complete — ready for 01-04
+stopped_at: Phase 1, Plan 01-04 complete — ready for 01-05
 last_updated: "2026-05-12"
-last_activity: 2026-05-12 — Plan 01-03 executed: extração Historico, Relatorio e Financeiro de App.tsx (App.tsx: 1839→1273 linhas)
+last_activity: 2026-05-12 — Plan 01-04 executed: extração Mensalistas de App.tsx com forwardRef + sub-componentes (App.tsx: 1273→800 linhas)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 12
+  completed_plans: 4
+  percent: 16
 ---
 
 # Project State
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-05-09)
 ## Current Position
 
 Phase: 1 of 5 (Refatoração do Renderer)
-Plan: 3 of 5 in current phase (01-03 complete)
-Status: Executing — Plan 01-04 is next
-Last activity: 2026-05-12 — Plan 01-03 complete (Historico.tsx 122L, Relatorio.tsx 139L, Financeiro.tsx 172L extraídos; App.tsx: 1839→1273 linhas)
+Plan: 4 of 5 in current phase (01-04 complete)
+Status: Executing — Plan 01-05 is next (final wave)
+Last activity: 2026-05-12 — Plan 01-04 complete (Mensalistas extraída: index.tsx 285L + 3 sub-components; App.tsx: 1273→800 linhas)
 
 Progress: [█░░░░░░░░░] 20%
 
@@ -89,5 +89,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-05-10
-Stopped at: Plan 01-03 complete — next is Plan 01-04
-Resume file: .planning/phases/01-refatora-o-do-renderer/01-04-PLAN.md
+Stopped at: Plan 01-04 complete — next is Plan 01-05
+Resume file: .planning/phases/01-refatora-o-do-renderer/01-05-PLAN.md
