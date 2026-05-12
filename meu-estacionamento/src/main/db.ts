@@ -93,6 +93,27 @@ db.exec(`
   )
 `)
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS family_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plate TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+  )
+`)
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS family_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    cpf TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES family_groups(id)
+  )
+`)
+
+ensureColumn('tickets', 'cpf', 'cpf TEXT')
+
 const stmts = {
   getAllActive: db.prepare(
     "SELECT * FROM tickets WHERE status = 'ATIVO' ORDER BY entrada DESC"
@@ -269,7 +290,46 @@ const stmts = {
   upsertDailyUsage: db.prepare(`
     INSERT INTO daily_free_usage (placa, data, minutos_usados) VALUES (?, ?, ?)
     ON CONFLICT(placa, data) DO UPDATE SET minutos_usados = minutos_usados + excluded.minutos_usados
-  `)
+  `),
+
+  getFamilyGroupByPlate: db.prepare(`
+    SELECT g.id, g.plate, g.created_at,
+      json_group_array(
+        CASE WHEN m.id IS NOT NULL
+          THEN json_object('id', m.id, 'name', m.name, 'cpf', m.cpf)
+          ELSE NULL
+        END
+      ) as members_json
+    FROM family_groups g
+    LEFT JOIN family_members m ON m.group_id = g.id
+    WHERE g.plate = ?
+    GROUP BY g.id
+  `),
+  listFamilyGroups: db.prepare(`
+    SELECT g.id, g.plate, g.created_at,
+      json_group_array(
+        CASE WHEN m.id IS NOT NULL
+          THEN json_object('id', m.id, 'name', m.name, 'cpf', m.cpf)
+          ELSE NULL
+        END
+      ) as members_json
+    FROM family_groups g
+    LEFT JOIN family_members m ON m.group_id = g.id
+    GROUP BY g.id
+    ORDER BY g.plate
+  `),
+  insertFamilyGroup: db.prepare(
+    'INSERT INTO family_groups (plate, created_at) VALUES (?, ?)'
+  ),
+  deleteFamilyGroup: db.prepare('DELETE FROM family_groups WHERE id = ?'),
+  deleteFamilyMembersByGroup: db.prepare('DELETE FROM family_members WHERE group_id = ?'),
+  insertFamilyMember: db.prepare(
+    'INSERT INTO family_members (group_id, name, cpf, created_at) VALUES (?, ?, ?, ?)'
+  ),
+  updateFamilyMember: db.prepare(
+    'UPDATE family_members SET name = ?, cpf = ? WHERE id = ?'
+  ),
+  deleteFamilyMember: db.prepare('DELETE FROM family_members WHERE id = ?')
 }
 
 export { effectiveBillingDayInMonth } from './garageDates'
@@ -341,9 +401,13 @@ export const dbOperations = {
     return !!row
   },
 
-  createTicket: (placa: string, tipo: string, entrada: string) => {
+  createTicket: (placa: string, tipo: string, entrada: string, cpf?: string) => {
     const result = stmts.createTicket.run(placa, tipo, entrada)
-    return result.lastInsertRowid as number
+    const id = result.lastInsertRowid as number
+    if (cpf) {
+      db.prepare('UPDATE tickets SET cpf = ? WHERE id = ?').run(cpf, id)
+    }
+    return id
   },
   checkoutTicket: (id: number, valor: number, saida: string) => {
     stmts.checkoutTicket.run('FINALIZADO', saida, valor, id)
@@ -701,6 +765,48 @@ export const dbOperations = {
         avulsos: avulsoWhileDebtor.reduce((s, t) => s + (t.valor ?? 0), 0)
       }
     }
+  },
+
+  getFamilyGroup: (plate: string) => {
+    const raw = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
+    const row = stmts.getFamilyGroupByPlate.get(raw) as any
+    if (!row) return null
+    const members = JSON.parse(row.members_json || '[]').filter(Boolean)
+    return { id: row.id, plate: row.plate, created_at: row.created_at, members }
+  },
+
+  listFamilyGroups: () => {
+    const rows = stmts.listFamilyGroups.all() as any[]
+    return rows.map((r) => ({
+      id: r.id,
+      plate: r.plate,
+      created_at: r.created_at,
+      members: JSON.parse(r.members_json || '[]').filter(Boolean)
+    }))
+  },
+
+  createFamilyGroup: (plate: string) => {
+    const raw = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
+    const result = stmts.insertFamilyGroup.run(raw, new Date().toISOString())
+    return { id: result.lastInsertRowid as number }
+  },
+
+  addFamilyMember: (groupId: number, name: string, cpf: string) => {
+    const result = stmts.insertFamilyMember.run(groupId, name, cpf, new Date().toISOString())
+    return { id: result.lastInsertRowid as number }
+  },
+
+  updateFamilyMember: (memberId: number, name: string, cpf: string) => {
+    stmts.updateFamilyMember.run(name, cpf, memberId)
+  },
+
+  deleteFamilyMember: (memberId: number) => {
+    stmts.deleteFamilyMember.run(memberId)
+  },
+
+  deleteFamilyGroup: (groupId: number) => {
+    stmts.deleteFamilyMembersByGroup.run(groupId)
+    stmts.deleteFamilyGroup.run(groupId)
   }
 }
 

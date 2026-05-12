@@ -55,8 +55,8 @@ export interface ClientStatement {
     competency_month?: string | null
     is_advance: number
   }[]
-  avulsoWhileDebtor: { id: number; placa: string; saida: string; valor: number }[]
+  avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string | null; valor: number }[]
   totals: { payments: number; avulsos: number }
 }
 
-export type View = 'inicio' | 'historico' | 'relatorio' | 'mensalistas' | 'financeiro' | 'excluidos' | 'configuracoes'
+export type View = 'inicio' | 'historico' | 'relatorio' | 'mensalistas' | 'familias' | 'financeiro' | 'excluidos' | 'configuracoes'

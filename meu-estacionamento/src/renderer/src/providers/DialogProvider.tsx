@@ -1,9 +1,9 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useCallback, useContext, useState } from 'react'
 import AlertModal from '../components/AlertModal'
 
 interface DialogContextValue {
   showAlert: (title: string, message: string, type: 'error' | 'success') => void
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void
+  showConfirm: (title: string, message: string, onConfirm: () => Promise<void> | void) => void
 }
 
 const DialogContext = createContext<DialogContextValue | null>(null)
@@ -30,15 +30,26 @@ export default function DialogProvider({
     open: boolean
     title: string
     message: string
-    onConfirm: () => void
+    onConfirm: () => Promise<void> | void
   }>({ open: false, title: '', message: '', onConfirm: () => {} })
 
-  const showAlert = (title: string, message: string, type: 'error' | 'success'): void => {
+  const showAlert = useCallback((title: string, message: string, type: 'error' | 'success'): void => {
     setAlertState({ open: true, title, message, type })
-  }
+  }, [])
 
-  const showConfirm = (title: string, message: string, onConfirm: () => void): void => {
+  const showConfirm = useCallback((title: string, message: string, onConfirm: () => Promise<void> | void): void => {
     setConfirmState({ open: true, title, message, onConfirm })
+  }, [])
+
+  const handleConfirm = async (): Promise<void> => {
+    try {
+      await confirmState.onConfirm()
+    } catch (err) {
+      console.error('Confirm callback threw:', err)
+      showAlert('Erro', 'Ocorreu um erro inesperado. Tente novamente.', 'error')
+    } finally {
+      setConfirmState((s) => ({ ...s, open: false }))
+    }
   }
 
   return (
@@ -58,7 +69,7 @@ export default function DialogProvider({
         type="error"
         onClose={() => setConfirmState((s) => ({ ...s, open: false }))}
         confirmMode
-        onConfirm={confirmState.onConfirm}
+        onConfirm={() => { void handleConfirm() }}
         confirmLabel="Confirmar"
       />
     </DialogContext.Provider>

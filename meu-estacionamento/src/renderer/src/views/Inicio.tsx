@@ -11,7 +11,9 @@ import {
   excludeAllActiveTickets
 } from '../services/tickets'
 import { printEntry, printExit } from '../services/printer'
+import { getFamilyGroup } from '../services/family'
 import ModalCheckout from '../components/ModalCheckout'
+import ModalSeletorMembro from '../components/ModalSeletorMembro'
 import { useTickets } from '../hooks/useTickets'
 import { useBarcodeScanner } from '../hooks/useBarcodeScanner'
 import { useDialog } from '../providers/DialogProvider'
@@ -47,6 +49,8 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
   const [debtorDecisionOpen, setDebtorDecisionOpen] = useState(false)
   const [pendingEntry, setPendingEntry] = useState<{ plate: string; info: SubscriptionInfo } | null>(null)
   const [garageEntryModal, setGarageEntryModal] = useState<{ plate: string; clientName: string } | null>(null)
+  const [familyGroup, setFamilyGroup] = useState<FamilyGroup | null>(null)
+  const [pendingFamilyEntry, setPendingFamilyEntry] = useState<{ plate: string; tipo: string } | null>(null)
 
   useEffect(() => {
     if (placa.length < 7) {
@@ -147,10 +151,11 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
     return m > 0 ? `${h}h ${m}min` : `${h}h`
   }
 
-  const registerEntryWithType = async (plate: string, typeToSave: string) => {
+  const registerEntryWithType = async (plate: string, typeToSave: string, cpf?: string) => {
     const result = await createTicket({
       placa: plate.toUpperCase(),
-      tipo: typeToSave
+      tipo: typeToSave,
+      ...(cpf ? { cpf } : {})
     })
     if (result.success) {
       setPlaca('')
@@ -210,6 +215,13 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
           }
           setSubscriptionInfo(info)
         }
+        const family = await getFamilyGroup(placa)
+        if (family && family.members.length > 0) {
+          setFamilyGroup(family)
+          setPendingFamilyEntry({ plate: placa, tipo: tipoToSave })
+          setLoading(false)
+          return
+        }
         await registerEntryWithType(placa, tipoToSave)
       } catch (err) {
         console.error(err)
@@ -239,6 +251,21 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
   )
 
   useBarcodeScanner(handleBarcodeScanned, true)
+
+  const handleFamilyMemberSelected = async (member: FamilyMember) => {
+    if (!pendingFamilyEntry) return
+    setFamilyGroup(null)
+    const { plate, tipo } = pendingFamilyEntry
+    setPendingFamilyEntry(null)
+    setLoading(true)
+    try {
+      await registerEntryWithType(plate, tipo, member.cpf)
+    } catch (err) {
+      showAlert('Erro', friendlyError(err), 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const searchPlacaNorm = plateToRaw(searchPlacaList).toUpperCase()
   const filteredTickets =
@@ -631,6 +658,17 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
             </div>
           </div>
         </div>
+      )}
+      {familyGroup && pendingFamilyEntry && (
+        <ModalSeletorMembro
+          plate={familyGroup.plate}
+          members={familyGroup.members}
+          onSelect={handleFamilyMemberSelected}
+          onCancel={() => {
+            setFamilyGroup(null)
+            setPendingFamilyEntry(null)
+          }}
+        />
       )}
     </>
   )

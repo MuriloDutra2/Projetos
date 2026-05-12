@@ -34,7 +34,7 @@ declare global {
         qtyMotos: number
         savedAt?: string
       }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
-      createTicket: (data: { placa: string; tipo: string }) => Promise<{ success: boolean; id?: number; entrada?: string; billedAsAvulso?: boolean; error?: string; message?: string }>
+      createTicket: (data: { placa: string; tipo: string; cpf?: string }) => Promise<{ success: boolean; id?: number; entrada?: string; billedAsAvulso?: boolean; error?: string; message?: string }>
       checkoutTicket: (data: { id: number }) => Promise<{ success: boolean; valor?: number; error?: string }>
       calculateValue: (data: { entrada: string; placa?: string; tipo?: string }) => Promise<{ valor: number }>
       checkPlateSubscription: (placa: string) => Promise<{
@@ -86,7 +86,7 @@ declare global {
           is_advance: number
           notes?: string | null
         }[]
-        avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number }[]
+        avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string | null; valor: number }[]
         totals: { payments: number; avulsos: number }
       } | null>
       exportFinancialCsv: () => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
@@ -102,6 +102,24 @@ declare global {
       }) => Promise<{ success: boolean; error?: string }>
       printEntry: (data: { id: number; placa: string; entrada: string }) => Promise<{ success: boolean; error?: string }>
       printExit: (data: { placa: string; entrada: string; saida: string; valor: number; tempoTotal: string }) => Promise<{ success: boolean; error?: string }>
+      getFamilyGroup: (plate: string) => Promise<{ success: boolean; data: FamilyGroup | null }>
+      listFamilyGroups: () => Promise<{ success: boolean; data: FamilyGroup[] }>
+      createFamilyGroup: (plate: string) => Promise<{ success: boolean; id?: number; error?: string }>
+      addFamilyMember: (groupId: number, name: string, cpf: string) => Promise<{ success: boolean; id?: number; error?: string }>
+      updateFamilyMember: (memberId: number, name: string, cpf: string) => Promise<{ success: boolean; error?: string }>
+      deleteFamilyMember: (memberId: number) => Promise<{ success: boolean; error?: string }>
+      deleteFamilyGroup: (groupId: number) => Promise<{ success: boolean; error?: string }>
     }
+  }
+  interface FamilyMember {
+    id: number
+    name: string
+    cpf: string
+  }
+  interface FamilyGroup {
+    id: number
+    plate: string
+    created_at: string
+    members: FamilyMember[]
   }
 }

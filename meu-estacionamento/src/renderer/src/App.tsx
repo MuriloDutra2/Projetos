@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { clsx } from 'clsx'
 import type { View } from './types/domain'
 import Inicio from './views/Inicio'
@@ -8,6 +8,7 @@ import Historico from './views/Historico'
 import Relatorio from './views/Relatorio'
 import Financeiro from './views/Financeiro'
 import Mensalistas, { type MensalistasHandle } from './views/Mensalistas'
+import GruposFamiliares from './views/GruposFamiliares'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 
 
@@ -15,9 +16,13 @@ function App(): React.JSX.Element {
   const [view, setView] = useState<View>('inicio')
   const mensalistasRef = useRef<MensalistasHandle>(null)
 
+  const handleCtrlN = useCallback(() => {
+    mensalistasRef.current?.openNewClientModal()
+  }, []) // mensalistasRef is a stable ref object
+
   useGlobalShortcuts({
     view,
-    onCtrlN: () => mensalistasRef.current?.openNewClientModal()
+    onCtrlN: handleCtrlN
   })
 
   return (
@@ -77,6 +82,19 @@ function App(): React.JSX.Element {
         </button>
         <button
           type="button"
+          onClick={() => setView('familias')}
+          className={clsx(
+            'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
+            view === 'familias' ? 'bg-red-600/80 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+          )}
+          title="Grupos Familiares"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+        <button
+          type="button"
           onClick={() => setView('financeiro')}
           className={clsx(
             'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
@@ -121,6 +139,7 @@ function App(): React.JSX.Element {
       {view === 'historico' && <Historico />}
       {view === 'relatorio' && <Relatorio />}
       {view === 'mensalistas' && <Mensalistas ref={mensalistasRef} />}
+      {view === 'familias' && <GruposFamiliares />}
       {view === 'financeiro' && <Financeiro />}
       {view === 'excluidos' && <Excluidos />}
       {view === 'configuracoes' && <Configuracoes />}

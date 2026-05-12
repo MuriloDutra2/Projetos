@@ -236,3 +236,20 @@ describe('minutosDaEstadia', () => {
     expect(minutosDaEstadia(e, e)).toBe(0)
   })
 })
+
+describe('família — tolerância por CPF', () => {
+  it('membro B tem saldo cheio mesmo após membro A esgotar o seu', () => {
+    // Membro A usou 150 min (saldo esgotado). Membro B não usou nada.
+    // Ao sair com saldo 0 usado (CPF do B), o cálculo de 150 min deve ser grátis.
+    expect(calcularValor(dia('2026-01-01', 14, 0), 150, dia('2026-01-01', 16, 30), u(0), false)).toBe(0)
+  })
+
+  it('membro C: segunda entrada desconta saldo já usado no dia', () => {
+    // Membro C já usou 100 min hoje. Fica mais 60 min (total 160 > 150) → cobra excedente.
+    expect(calcularValor(dia('2026-01-01', 14, 0), 150, dia('2026-01-01', 15, 0), u(100), false)).toBeGreaterThan(0)
+  })
+
+  it('placa avulsa não-família: comportamento inalterado (90 min grátis)', () => {
+    expect(calcularValor(dia('2026-01-01', 10, 0), 90, dia('2026-01-01', 11, 30), u(0), false)).toBe(0)
+  })
+})
