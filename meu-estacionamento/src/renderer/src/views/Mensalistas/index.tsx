@@ -121,9 +121,14 @@ const Mensalistas = forwardRef<MensalistasHandle>((_props, ref): React.JSX.Eleme
   }
 
   const openStatement = async (c: ClientRow): Promise<void> => {
-    const data = await getClientStatement(c.id)
-    setStatementData(data as ClientStatement | null)
-    setStatementOpen(true)
+    try {
+      const data = await getClientStatement(c.id)
+      setStatementData(data as ClientStatement | null)
+      setStatementOpen(true)
+    } catch (err) {
+      console.error(err)
+      showAlert('Erro', 'Não foi possível carregar o extrato. Tente novamente.', 'error')
+    }
   }
 
   const openDeleteModal = (c: ClientRow): void => {
