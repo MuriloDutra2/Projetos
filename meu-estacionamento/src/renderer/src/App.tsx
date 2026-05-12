@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { format, differenceInMinutes, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns'
+import { format, differenceInMinutes } from 'date-fns'
 import { clsx } from 'clsx'
-import type { Ticket, HistoryEntry, ClientRow, SubscriptionInfo, ClientStatement, View } from './types/domain'
+import type { Ticket, ClientRow, SubscriptionInfo, ClientStatement, View } from './types/domain'
 import {
   getTickets,
   createTicket,
@@ -17,23 +17,9 @@ import {
   deleteClient,
   getClientStatement
 } from './services/clients'
-import {
-  getFinancialHistory,
-  getFinancialSummaryByMethod,
-  exportFinancialCsv
-} from './services/financial'
-import {
-  getHistory,
-  getHistoryForDay,
-  getHistoryLast24h,
-  getDailyReport,
-  saveDailyReport,
-  exportDailyReportPdf
-} from './services/reports'
 import { printEntry, printExit } from './services/printer'
 import { useDialog } from './providers/DialogProvider'
 
-const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
 /** Formata placas para exibição: "PLACA1, PLACA2 (+X)" com tooltip completo */
 function formatPlatesDisplay(plates: string[]): { text: string; title: string } {
@@ -49,6 +35,9 @@ function formatPlatesDisplay(plates: string[]): { text: string; title: string } 
 import logoImg from './assets/logo.png'
 import Excluidos from './views/Excluidos'
 import Configuracoes from './views/Configuracoes'
+import Historico from './views/Historico'
+import Relatorio from './views/Relatorio'
+import Financeiro from './views/Financeiro'
 import ModalCheckout from './components/ModalCheckout'
 import ModalNovoCliente, { type ClientToEdit } from './components/ModalNovoCliente'
 import ModalRenovar from './components/ModalRenovar'
@@ -78,10 +67,7 @@ function App(): React.JSX.Element {
   const [placa, setPlaca] = useState('')
   const [tipo, setTipo] = useState<'Carro' | 'Moto'>('Carro')
   const [tickets, setTickets] = useState<Ticket[]>([])
-  const [history, setHistory] = useState<HistoryEntry[]>([])
   const [clients, setClients] = useState<ClientRow[]>([])
-  const [financialHistory, setFinancialHistory] = useState<any[]>([])
-  const [financialByMethod, setFinancialByMethod] = useState<{ payment_method: string; total: number }[]>([])
   const [loading, setLoading] = useState(false)
   const [view, setView] = useState<View>('inicio')
   const [subscriptionInfo, setSubscriptionInfo] = useState<SubscriptionInfo | null>(null)
@@ -94,8 +80,6 @@ function App(): React.JSX.Element {
 
   const [modalNovoClienteOpen, setModalNovoClienteOpen] = useState(false)
   const [clientToEdit, setClientToEdit] = useState<ClientToEdit | null>(null)
-  const [financeFilterMonth, setFinanceFilterMonth] = useState(() => new Date().getMonth() + 1)
-  const [financeFilterYear, setFinanceFilterYear] = useState(() => new Date().getFullYear())
   const [modalRenovarOpen, setModalRenovarOpen] = useState(false)
   const [renovarClient, setRenovarClient] = useState<{
     clientId: number
@@ -107,18 +91,6 @@ function App(): React.JSX.Element {
   } | null>(null)
   const [searchMensalistas, setSearchMensalistas] = useState('')
   const [searchPlacaList, setSearchPlacaList] = useState('')
-  const [historyDay, setHistoryDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
-  const [historyForDay, setHistoryForDay] = useState<HistoryEntry[]>([])
-  const [historyLast24h, setHistoryLast24h] = useState<HistoryEntry[]>([])
-  const [historicoFiltro24h, setHistoricoFiltro24h] = useState(false)
-  const [searchHistoricoPlaca, setSearchHistoricoPlaca] = useState('')
-  const [reportDay, setReportDay] = useState(() => format(new Date(), 'yyyy-MM-dd'))
-  const [dailyReport, setDailyReport] = useState<{
-    totalAvulsos: number
-    planosVendidosCount: number
-    planosVendidosValue: number
-    saved: { qtyCars: number; qtyMotos: number; createdAt: string } | null
-  } | null>(null)
   const [modalExcluirTodosOpen, setModalExcluirTodosOpen] = useState(false)
   const [excluirTodosPassword, setExcluirTodosPassword] = useState('')
   const [excluirTodosLoading, setExcluirTodosLoading] = useState(false)
@@ -138,24 +110,8 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (view === 'historico') {
-      if (historicoFiltro24h) {
-        getHistoryLast24h().then(setHistoryLast24h)
-      } else {
-        getHistoryForDay(historyDay).then(setHistoryForDay)
-      }
-    }
-    if (view === 'relatorio') {
-      getDailyReport(reportDay).then(setDailyReport)
-    }
     if (view === 'mensalistas') loadClients()
-    if (view === 'financeiro') {
-      loadHistory()
-      loadFinancialHistory()
-      getFinancialSummaryByMethod({ month: financeFilterMonth, year: financeFilterYear })
-        .then(setFinancialByMethod)
-    }
-  }, [view, historyDay, reportDay, historicoFiltro24h, financeFilterMonth, financeFilterYear])
+  }, [view])
 
   useEffect(() => {
     const t = setInterval(() => setTickets((p) => [...p]), 60000)
@@ -197,15 +153,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  const loadHistory = async () => {
-    try {
-      const data = await getHistory()
-      setHistory(data)
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
   const loadClients = async () => {
     try {
       const data = await getClients()
@@ -214,15 +161,6 @@ function App(): React.JSX.Element {
       console.error(e)
       setClients([])
       showAlert('Erro', 'Erro ao carregar mensalistas. Tente novamente.', 'error')
-    }
-  }
-
-  const loadFinancialHistory = async () => {
-    try {
-      const data = await getFinancialHistory()
-      setFinancialHistory(data)
-    } catch (e) {
-      console.error(e)
     }
   }
 
@@ -308,14 +246,6 @@ function App(): React.JSX.Element {
         setModalOpen(false)
         setCheckoutTicket(null)
         await loadTickets()
-        if (view === 'historico') {
-          if (historicoFiltro24h) getHistoryLast24h().then(setHistoryLast24h)
-          else getHistoryForDay(historyDay).then(setHistoryForDay)
-        }
-        if (view === 'financeiro') {
-          await loadHistory()
-          await loadFinancialHistory()
-        }
       } else {
         showAlert('Erro', friendlyError(result.error ?? 'checkout'), 'error')
       }
@@ -336,38 +266,6 @@ function App(): React.JSX.Element {
     const m = minutos % 60
     return m > 0 ? `${h}h ${m}min` : `${h}h`
   }
-
-  const filterDate = new Date(financeFilterYear, financeFilterMonth - 1, 1)
-  const monthStart = startOfMonth(filterDate)
-  const monthEnd = endOfMonth(filterDate)
-  const inMonth = (d: string) => isWithinInterval(new Date(d), { start: monthStart, end: monthEnd })
-  const totalAvulsosMes = history
-    .filter((h) => h.saida && inMonth(h.saida))
-    .reduce((s, h) => s + (h.valor ?? 0), 0)
-  const totalRenovacoesMes = financialHistory
-    .filter((p) => inMonth(p.payment_date))
-    .reduce((s, p) => s + (p.amount ?? 0), 0)
-
-  const mixedTransactionsAll = [
-    ...history
-      .filter((h) => h.saida)
-      .map((h) => ({
-        date: h.saida,
-        type: 'avulso' as const,
-        description: `Ticket ${h.placa}`,
-        value: h.valor ?? 0
-      })),
-    ...financialHistory.map((p) => ({
-      date: p.payment_date,
-      type: 'renovacao' as const,
-      description: `Renovação - ${p.client_name}${p.payment_method ? ` (${p.payment_method})` : ''}`,
-      value: p.amount ?? 0
-    }))
-  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
-  const mixedTransactions = view === 'financeiro'
-    ? mixedTransactionsAll.filter((t) => inMonth(t.date))
-    : mixedTransactionsAll
 
   const registerEntryWithType = async (plate: string, typeToSave: string) => {
     const result = await createTicket({
@@ -857,221 +755,9 @@ function App(): React.JSX.Element {
         </>
       )}
 
-      {view === 'historico' && (() => {
-        const historyBaseList = historicoFiltro24h ? historyLast24h : historyForDay
-        const searchHistoricoNorm = plateToRaw(searchHistoricoPlaca).toUpperCase()
-        const historyFilteredList =
-          searchHistoricoNorm.length === 0
-            ? historyBaseList
-            : historyBaseList.filter((h) =>
-                (h.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').includes(searchHistoricoNorm)
-              )
-        return (
-          <div className="flex-1 p-6 overflow-y-auto">
-            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-              <h2 className="text-xl font-bold text-white">
-                {historicoFiltro24h ? 'Últimas 24 horas' : 'Histórico do dia'}
-              </h2>
-              <div className="flex flex-wrap items-center gap-3">
-                {!historicoFiltro24h && (
-                  <input
-                    type="date"
-                    value={historyDay}
-                    onChange={(e) => setHistoryDay(e.target.value)}
-                    className="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500"
-                  />
-                )}
-                <button
-                  type="button"
-                  onClick={() => setHistoricoFiltro24h((v) => !v)}
-                  className={clsx(
-                    'px-4 py-2 rounded-lg font-medium transition',
-                    historicoFiltro24h
-                      ? 'bg-red-600 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                  )}
-                >
-                  Últimas 24h
-                </button>
-              </div>
-            </div>
-            <div className="mb-4">
-              <input
-                type="text"
-                value={searchHistoricoPlaca}
-                onChange={(e) => setSearchHistoricoPlaca(plateToRaw(e.target.value))}
-                placeholder="Buscar por placa..."
-                className="w-full max-w-xs px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-red-500"
-              />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-              <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                <p className="text-sm text-gray-400">
-                  {historicoFiltro24h ? 'Veículos (últimas 24h)' : `Veículos no dia (${format(new Date(historyDay + 'T12:00:00'), 'dd/MM/yyyy')})`}
-                </p>
-                <p className="text-2xl font-bold text-white">{historyFilteredList.length}</p>
-              </div>
-              <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                <p className="text-sm text-gray-400">Faturamento (R$)</p>
-                <p className="text-2xl font-bold text-green-500">
-                  {historyFilteredList.reduce((s, h) => s + (h.valor ?? 0), 0).toFixed(2).replace('.', ',')}
-                </p>
-              </div>
-            </div>
-            <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-gray-700 bg-gray-700/50">
-                      <th className="px-4 py-3 text-sm font-semibold text-gray-300">Placa</th>
-                      <th className="px-4 py-3 text-sm font-semibold text-gray-300">Entrada</th>
-                      <th className="px-4 py-3 text-sm font-semibold text-gray-300">Saída</th>
-                      <th className="px-4 py-3 text-sm font-semibold text-gray-300 text-right">Valor</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {historyFilteredList.length === 0 ? (
-                      <tr>
-                        <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
-                          {historyBaseList.length === 0
-                            ? (historicoFiltro24h ? 'Nenhum registro nas últimas 24h' : 'Nenhum registro finalizado neste dia')
-                            : 'Nenhum resultado na busca por placa'}
-                        </td>
-                      </tr>
-                    ) : (
-                      historyFilteredList.map((h) => (
-                        <tr key={h.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                          <td className="px-4 py-3 font-medium text-white">{h.placa}</td>
-                          <td className="px-4 py-3 text-gray-300">{format(new Date(h.entrada), 'dd/MM HH:mm')}</td>
-                          <td className="px-4 py-3 text-gray-300">{h.saida ? format(new Date(h.saida), 'dd/MM HH:mm') : '-'}</td>
-                          <td className="px-4 py-3 text-right font-medium text-white">
-                            R$ {(h.valor ?? 0).toFixed(2).replace('.', ',')}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
+      {view === 'historico' && <Historico />}
 
-      {view === 'relatorio' && (
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-            <h2 className="text-xl font-bold text-white">Relatório do dia</h2>
-            <input
-              type="date"
-              value={reportDay}
-              onChange={(e) => setReportDay(e.target.value)}
-              className="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-red-500"
-            />
-          </div>
-          {dailyReport && (
-            <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                  <p className="text-sm text-gray-400">Faturamento avulsos (R$)</p>
-                  <p className="text-2xl font-bold text-white">
-                    {dailyReport.totalAvulsos.toFixed(2).replace('.', ',')}
-                  </p>
-                </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                  <p className="text-sm text-gray-400">Planos vendidos (qtd)</p>
-                  <p className="text-2xl font-bold text-white">{dailyReport.planosVendidosCount}</p>
-                </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                  <p className="text-sm text-gray-400">Valor planos vendidos (R$)</p>
-                  <p className="text-2xl font-bold text-green-500">
-                    {dailyReport.planosVendidosValue.toFixed(2).replace('.', ',')}
-                  </p>
-                </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-                  <p className="text-sm text-gray-400">Carros / Motos no pátio (salvo)</p>
-                  <p className="text-lg font-bold text-white">
-                    {dailyReport.saved
-                      ? `${dailyReport.saved.qtyCars} / ${dailyReport.saved.qtyMotos}`
-                      : '—'}
-                  </p>
-                  {dailyReport.saved && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Salvo em {format(new Date(dailyReport.saved.createdAt), 'dd/MM/yyyy HH:mm')}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="bg-gray-800 border border-gray-700 rounded-lg p-4 mb-6">
-                <p className="text-sm text-gray-300 mb-2 font-semibold">Tabela atual de mensalistas (referência)</p>
-                <div className="text-sm text-gray-400 space-y-1">
-                  <p>Mensalista Carro 1: R$ 60,00</p>
-                  <p>Mensalista Moto: R$ 50,00</p>
-                  <p>Carro e Moto (ou 2 carros / 2 motos): R$ 75,00</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    const report = await getDailyReport(reportDay)
-                    const qtyCars = tickets.filter((t) => t.tipo === 'Carro').length
-                    const qtyMotos = tickets.filter((t) => t.tipo === 'Moto').length
-                    const res = await saveDailyReport({
-                      dateStr: reportDay,
-                      totalAvulsos: report.totalAvulsos,
-                      planosVendidosCount: report.planosVendidosCount,
-                      planosVendidosValue: report.planosVendidosValue,
-                      qtyCars,
-                      qtyMotos
-                    })
-                    if (res.success) {
-                      showAlert('Salvo', 'Relatório do dia salvo com sucesso.', 'success')
-                      getDailyReport(reportDay).then(setDailyReport)
-                    } else {
-                      showAlert('Erro', friendlyError(res.error ?? 'Erro ao salvar'), 'error')
-                    }
-                  }}
-                  disabled={reportDay !== format(new Date(), 'yyyy-MM-dd')}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg font-medium text-white"
-                >
-                  Salvar relatório do dia
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (!dailyReport) return
-                    const res = await exportDailyReportPdf({
-                      dateStr: reportDay,
-                      totalAvulsos: dailyReport.totalAvulsos,
-                      planosVendidosCount: dailyReport.planosVendidosCount,
-                      planosVendidosValue: dailyReport.planosVendidosValue,
-                      qtyCars: dailyReport.saved?.qtyCars ?? 0,
-                      qtyMotos: dailyReport.saved?.qtyMotos ?? 0,
-                      savedAt: dailyReport.saved
-                        ? format(new Date(dailyReport.saved.createdAt), 'dd/MM/yyyy HH:mm')
-                        : undefined
-                    })
-                    if (res.success && res.path) {
-                      showAlert('PDF exportado', `Arquivo salvo em ${res.path}`, 'success')
-                    } else if (!res.canceled && res.error) {
-                      showAlert('Erro', friendlyError(res.error), 'error')
-                    }
-                  }}
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white"
-                >
-                  Baixar PDF
-                </button>
-              </div>
-              <p className="text-sm text-gray-500 mt-2">
-                {reportDay === format(new Date(), 'yyyy-MM-dd')
-                  ? 'Ao salvar, são gravados o faturamento de avulsos e planos do dia e a quantidade atual de carros e motos no pátio.'
-                  : 'Salvar está disponível apenas para o dia de hoje (a quantidade de carros/motos no pátio é do momento do salvamento).'}
-              </p>
-            </>
-          )}
-        </div>
-      )}
+      {view === 'relatorio' && <Relatorio />}
 
       {view === 'mensalistas' && (
         <div className="flex-1 p-6 overflow-y-auto">
@@ -1276,112 +962,7 @@ function App(): React.JSX.Element {
         </div>
       )}
 
-      {view === 'financeiro' && (
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
-            <h2 className="text-xl font-bold text-white">Financeiro</h2>
-            <div className="flex items-center gap-2">
-              <select
-                value={financeFilterMonth}
-                onChange={(e) => setFinanceFilterMonth(Number(e.target.value))}
-                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
-              >
-                {MESES.map((m, i) => (
-                  <option key={m} value={i + 1}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={financeFilterYear}
-                onChange={(e) => setFinanceFilterYear(Number(e.target.value))}
-                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
-              >
-                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                const res = await exportFinancialCsv()
-                if (res.success && res.path) showAlert('Exportado', `Arquivo salvo em ${res.path}`, 'success')
-                else if (!res.canceled && res.error) showAlert('Erro', friendlyError(res.error), 'error')
-              }}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white"
-            >
-              Exportar CSV
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Total Recebido (Renovações) - {MESES[financeFilterMonth - 1]}/{financeFilterYear}</p>
-              <p className="text-2xl font-bold text-green-500">
-                R$ {totalRenovacoesMes.toFixed(2).replace('.', ',')}
-              </p>
-              {financialByMethod.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  {financialByMethod.map((m) => (
-                    <p key={m.payment_method} className="text-xs text-gray-300">
-                      {m.payment_method}: R$ {(m.total ?? 0).toFixed(2).replace('.', ',')}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Total Recebido (Avulsos) - {MESES[financeFilterMonth - 1]}/{financeFilterYear}</p>
-              <p className="text-2xl font-bold text-white">
-                R$ {totalAvulsosMes.toFixed(2).replace('.', ',')}
-              </p>
-            </div>
-          </div>
-          <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-gray-700 bg-gray-700/50">
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Data</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Tipo</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Descrição</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300 text-right">Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mixedTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhuma transação</td>
-                    </tr>
-                  ) : (
-                    mixedTransactions.map((t, i) => (
-                      <tr key={`${t.type}-${t.date}-${i}`} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                        <td className="px-4 py-3 text-gray-300">{format(new Date(t.date), 'dd/MM/yyyy HH:mm')}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={clsx(
-                              'px-2 py-1 rounded text-xs font-medium',
-                              t.type === 'renovacao' ? 'bg-green-900/60 text-green-300' : 'bg-gray-600 text-gray-200'
-                            )}
-                          >
-                            {t.type === 'renovacao' ? 'Renovação' : 'Avulso'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-white">{t.description}</td>
-                        <td className="px-4 py-3 text-right font-medium text-white">
-                          R$ {t.value.toFixed(2).replace('.', ',')}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+      {view === 'financeiro' && <Financeiro />}
 
       {view === 'excluidos' && <Excluidos />}
 
