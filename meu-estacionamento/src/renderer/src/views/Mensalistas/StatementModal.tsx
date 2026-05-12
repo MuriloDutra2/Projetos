@@ -60,7 +60,8 @@ export default function StatementModal({
                 <div className="space-y-1 text-xs text-gray-300">
                   {statementData.avulsoWhileDebtor.slice(0, 20).map((t) => (
                     <div key={t.id} className="bg-gray-700/60 rounded p-2">
-                      {t.placa} - {format(new Date(t.saida), 'dd/MM/yyyy HH:mm')} - R${' '}
+                      {t.placa} -{' '}
+                      {t.saida ? format(new Date(t.saida), 'dd/MM/yyyy HH:mm') : '—'} - R${' '}
                       {(t.valor ?? 0).toFixed(2).replace('.', ',')}
                     </div>
                   ))}

@@ -86,7 +86,7 @@ declare global {
           is_advance: number
           notes?: string | null
         }[]
-        avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number }[]
+        avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string | null; valor: number }[]
         totals: { payments: number; avulsos: number }
       } | null>
       exportFinancialCsv: () => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
