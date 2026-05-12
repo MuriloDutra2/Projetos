@@ -1,12 +1,46 @@
 import Database from 'better-sqlite3'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { app } from 'electron'
+import { existsSync, mkdirSync, copyFileSync, readdirSync, unlinkSync } from 'fs'
 import { effectiveBillingDayInMonth } from './garageDates'
 
 const dbPath =
   process.env.NODE_ENV === 'development'
     ? join(process.cwd(), 'parking.db')
     : join(app.getPath('userData'), 'parking.db')
+
+/**
+ * Snapshot do parking.db antes de abrir a conexão.
+ * Roda em toda inicialização — se algo der errado em uma atualização ou
+ * migração, sempre há cópias recentes em userData/backups/.
+ * Mantém os 10 backups mais recentes (rolling).
+ */
+function backupDatabaseOnStartup(): void {
+  if (!existsSync(dbPath)) return
+  try {
+    const backupDir = join(dirname(dbPath), 'backups')
+    mkdirSync(backupDir, { recursive: true })
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const backupPath = join(backupDir, `parking-${ts}.db`)
+    copyFileSync(dbPath, backupPath)
+
+    const files = readdirSync(backupDir)
+      .filter((f) => f.startsWith('parking-') && f.endsWith('.db'))
+      .sort()
+      .reverse()
+    files.slice(10).forEach((f) => {
+      try {
+        unlinkSync(join(backupDir, f))
+      } catch {
+        // ignora erro de delete; próximo startup tenta de novo
+      }
+    })
+  } catch (e) {
+    console.warn('[backup] Falha ao copiar parking.db:', e)
+  }
+}
+
+backupDatabaseOnStartup()
 
 const db = new Database(dbPath)
 
