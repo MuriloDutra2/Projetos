@@ -59,4 +59,4 @@ export interface ClientStatement {
   totals: { payments: number; avulsos: number }
 }
 
-export type View = 'inicio' | 'historico' | 'relatorio' | 'mensalistas' | 'financeiro' | 'excluidos' | 'configuracoes'
+export type View = 'inicio' | 'historico' | 'relatorio' | 'mensalistas' | 'familias' | 'financeiro' | 'excluidos' | 'configuracoes'

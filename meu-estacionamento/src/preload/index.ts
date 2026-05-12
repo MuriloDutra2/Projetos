@@ -30,7 +30,7 @@ const api = {
     qtyMotos: number
     savedAt?: string
   }) => ipcRenderer.invoke('export-daily-report-pdf', data),
-  createTicket: (data: { placa: string; tipo: string }) =>
+  createTicket: (data: { placa: string; tipo: string; cpf?: string }) =>
     ipcRenderer.invoke('create-ticket', data),
   checkoutTicket: (data: { id: number }) => ipcRenderer.invoke('checkout-ticket', data),
   calculateValue: (data: {
@@ -93,7 +93,16 @@ const api = {
   printEntry: (data: { id: number; placa: string; entrada: string }) =>
     ipcRenderer.invoke('print-entry', data),
   printExit: (data: { placa: string; entrada: string; saida: string; valor: number; tempoTotal: string }) =>
-    ipcRenderer.invoke('print-exit', data)
+    ipcRenderer.invoke('print-exit', data),
+  getFamilyGroup: (plate: string) => ipcRenderer.invoke('get-family-group', plate),
+  listFamilyGroups: () => ipcRenderer.invoke('list-family-groups'),
+  createFamilyGroup: (plate: string) => ipcRenderer.invoke('create-family-group', plate),
+  addFamilyMember: (groupId: number, name: string, cpf: string) =>
+    ipcRenderer.invoke('add-family-member', { groupId, name, cpf }),
+  updateFamilyMember: (memberId: number, name: string, cpf: string) =>
+    ipcRenderer.invoke('update-family-member', { memberId, name, cpf }),
+  deleteFamilyMember: (memberId: number) => ipcRenderer.invoke('delete-family-member', memberId),
+  deleteFamilyGroup: (groupId: number) => ipcRenderer.invoke('delete-family-group', groupId)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

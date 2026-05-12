@@ -102,7 +102,7 @@ app.whenReady().then(() => {
 
   const normalizePlate = (p: string) => p.replace(/[^A-Z0-9]/gi, '').toUpperCase()
 
-  ipcMain.handle('create-ticket', (_event, { placa, tipo }: { placa: string; tipo: string }) => {
+  ipcMain.handle('create-ticket', (_event, { placa, tipo, cpf }: { placa: string; tipo: string; cpf?: string }) => {
     try {
       const placaNorm = normalizePlate(placa)
       if (!placaNorm) return { success: false, error: 'Placa inválida' }
@@ -115,7 +115,7 @@ app.whenReady().then(() => {
         (sub?.planType?.startsWith('MENSAL') || sub?.planType === 'GARAGEM')
       )
       const entrada = new Date().toISOString()
-      const id = dbOperations.createTicket(placaNorm, tipo, entrada)
+      const id = dbOperations.createTicket(placaNorm, tipo, entrada, cpf)
       return { success: true, id, entrada, billedAsAvulso: subscriberDebtor }
     } catch (error) {
       console.error('Erro ao criar ticket:', error)
@@ -154,8 +154,9 @@ app.whenReady().then(() => {
 
         const freeMinutes = getFreeMinutesForTicket(ticket.placa, ticket.tipo)
         const aplicarPernoite = isAvulsoParaPernoite(ticket.tipo)
+        const usageKey = (ticket as any).cpf ?? ticket.placa
         const getDailyForDate = (dateKey: string) =>
-          dbOperations.getDailyUsedMinutes(ticket.placa, dateKey)
+          dbOperations.getDailyUsedMinutes(usageKey, dateKey)
         const valor = calcularValor(
           ticket.entrada,
           freeMinutes,
@@ -169,7 +170,7 @@ app.whenReady().then(() => {
         if (usaControleDiario(ticket.tipo) && freeMinutes < 999999) {
           const segs = splitStayIntoLocalDaySegments(ticket.entrada, saida)
           for (const seg of segs) {
-            dbOperations.addDailyUsedMinutes(ticket.placa, seg.dateKey, seg.minutes)
+            dbOperations.addDailyUsedMinutes(usageKey, seg.dateKey, seg.minutes)
           }
         }
 
@@ -733,6 +734,67 @@ app.whenReady().then(() => {
       }
     }
   )
+
+  ipcMain.handle('get-family-group', (_event, plate: string) => {
+    try {
+      return { success: true, data: dbOperations.getFamilyGroup(plate) }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('list-family-groups', () => {
+    try {
+      return { success: true, data: dbOperations.listFamilyGroups() }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('create-family-group', (_event, plate: string) => {
+    try {
+      const result = dbOperations.createFamilyGroup(plate)
+      return { success: true, id: result.id }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('add-family-member', (_event, { groupId, name, cpf }: { groupId: number; name: string; cpf: string }) => {
+    try {
+      const result = dbOperations.addFamilyMember(groupId, name, cpf)
+      return { success: true, id: result.id }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('update-family-member', (_event, { memberId, name, cpf }: { memberId: number; name: string; cpf: string }) => {
+    try {
+      dbOperations.updateFamilyMember(memberId, name, cpf)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('delete-family-member', (_event, memberId: number) => {
+    try {
+      dbOperations.deleteFamilyMember(memberId)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('delete-family-group', (_event, groupId: number) => {
+    try {
+      dbOperations.deleteFamilyGroup(groupId)
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
 
   createWindow()
 
