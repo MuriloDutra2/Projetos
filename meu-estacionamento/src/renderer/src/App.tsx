@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { format, differenceInMinutes, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns'
+import { format, differenceInMinutes } from 'date-fns'
 import { clsx } from 'clsx'
-import type { Ticket, HistoryEntry, ClientRow, SubscriptionInfo, ClientStatement, View } from './types/domain'
+import type { Ticket, ClientRow, SubscriptionInfo, ClientStatement, View } from './types/domain'
 import {
   getTickets,
   createTicket,
@@ -17,18 +17,9 @@ import {
   deleteClient,
   getClientStatement
 } from './services/clients'
-import {
-  getFinancialHistory,
-  getFinancialSummaryByMethod,
-  exportFinancialCsv
-} from './services/financial'
-import {
-  getHistory
-} from './services/reports'
 import { printEntry, printExit } from './services/printer'
 import { useDialog } from './providers/DialogProvider'
 
-const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
 /** Formata placas para exibição: "PLACA1, PLACA2 (+X)" com tooltip completo */
 function formatPlatesDisplay(plates: string[]): { text: string; title: string } {
@@ -46,6 +37,7 @@ import Excluidos from './views/Excluidos'
 import Configuracoes from './views/Configuracoes'
 import Historico from './views/Historico'
 import Relatorio from './views/Relatorio'
+import Financeiro from './views/Financeiro'
 import ModalCheckout from './components/ModalCheckout'
 import ModalNovoCliente, { type ClientToEdit } from './components/ModalNovoCliente'
 import ModalRenovar from './components/ModalRenovar'
@@ -75,10 +67,7 @@ function App(): React.JSX.Element {
   const [placa, setPlaca] = useState('')
   const [tipo, setTipo] = useState<'Carro' | 'Moto'>('Carro')
   const [tickets, setTickets] = useState<Ticket[]>([])
-  const [history, setHistory] = useState<HistoryEntry[]>([])
   const [clients, setClients] = useState<ClientRow[]>([])
-  const [financialHistory, setFinancialHistory] = useState<any[]>([])
-  const [financialByMethod, setFinancialByMethod] = useState<{ payment_method: string; total: number }[]>([])
   const [loading, setLoading] = useState(false)
   const [view, setView] = useState<View>('inicio')
   const [subscriptionInfo, setSubscriptionInfo] = useState<SubscriptionInfo | null>(null)
@@ -91,8 +80,6 @@ function App(): React.JSX.Element {
 
   const [modalNovoClienteOpen, setModalNovoClienteOpen] = useState(false)
   const [clientToEdit, setClientToEdit] = useState<ClientToEdit | null>(null)
-  const [financeFilterMonth, setFinanceFilterMonth] = useState(() => new Date().getMonth() + 1)
-  const [financeFilterYear, setFinanceFilterYear] = useState(() => new Date().getFullYear())
   const [modalRenovarOpen, setModalRenovarOpen] = useState(false)
   const [renovarClient, setRenovarClient] = useState<{
     clientId: number
@@ -124,13 +111,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     if (view === 'mensalistas') loadClients()
-    if (view === 'financeiro') {
-      loadHistory()
-      loadFinancialHistory()
-      getFinancialSummaryByMethod({ month: financeFilterMonth, year: financeFilterYear })
-        .then(setFinancialByMethod)
-    }
-  }, [view, financeFilterMonth, financeFilterYear])
+  }, [view])
 
   useEffect(() => {
     const t = setInterval(() => setTickets((p) => [...p]), 60000)
@@ -172,15 +153,6 @@ function App(): React.JSX.Element {
     }
   }
 
-  const loadHistory = async () => {
-    try {
-      const data = await getHistory()
-      setHistory(data)
-    } catch (e) {
-      console.error(e)
-    }
-  }
-
   const loadClients = async () => {
     try {
       const data = await getClients()
@@ -189,15 +161,6 @@ function App(): React.JSX.Element {
       console.error(e)
       setClients([])
       showAlert('Erro', 'Erro ao carregar mensalistas. Tente novamente.', 'error')
-    }
-  }
-
-  const loadFinancialHistory = async () => {
-    try {
-      const data = await getFinancialHistory()
-      setFinancialHistory(data)
-    } catch (e) {
-      console.error(e)
     }
   }
 
@@ -283,10 +246,6 @@ function App(): React.JSX.Element {
         setModalOpen(false)
         setCheckoutTicket(null)
         await loadTickets()
-        if (view === 'financeiro') {
-          await loadHistory()
-          await loadFinancialHistory()
-        }
       } else {
         showAlert('Erro', friendlyError(result.error ?? 'checkout'), 'error')
       }
@@ -307,38 +266,6 @@ function App(): React.JSX.Element {
     const m = minutos % 60
     return m > 0 ? `${h}h ${m}min` : `${h}h`
   }
-
-  const filterDate = new Date(financeFilterYear, financeFilterMonth - 1, 1)
-  const monthStart = startOfMonth(filterDate)
-  const monthEnd = endOfMonth(filterDate)
-  const inMonth = (d: string) => isWithinInterval(new Date(d), { start: monthStart, end: monthEnd })
-  const totalAvulsosMes = history
-    .filter((h) => h.saida && inMonth(h.saida))
-    .reduce((s, h) => s + (h.valor ?? 0), 0)
-  const totalRenovacoesMes = financialHistory
-    .filter((p) => inMonth(p.payment_date))
-    .reduce((s, p) => s + (p.amount ?? 0), 0)
-
-  const mixedTransactionsAll = [
-    ...history
-      .filter((h) => h.saida)
-      .map((h) => ({
-        date: h.saida,
-        type: 'avulso' as const,
-        description: `Ticket ${h.placa}`,
-        value: h.valor ?? 0
-      })),
-    ...financialHistory.map((p) => ({
-      date: p.payment_date,
-      type: 'renovacao' as const,
-      description: `Renovação - ${p.client_name}${p.payment_method ? ` (${p.payment_method})` : ''}`,
-      value: p.amount ?? 0
-    }))
-  ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
-  const mixedTransactions = view === 'financeiro'
-    ? mixedTransactionsAll.filter((t) => inMonth(t.date))
-    : mixedTransactionsAll
 
   const registerEntryWithType = async (plate: string, typeToSave: string) => {
     const result = await createTicket({
@@ -1035,112 +962,7 @@ function App(): React.JSX.Element {
         </div>
       )}
 
-      {view === 'financeiro' && (
-        <div className="flex-1 p-6 overflow-y-auto">
-          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
-            <h2 className="text-xl font-bold text-white">Financeiro</h2>
-            <div className="flex items-center gap-2">
-              <select
-                value={financeFilterMonth}
-                onChange={(e) => setFinanceFilterMonth(Number(e.target.value))}
-                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
-              >
-                {MESES.map((m, i) => (
-                  <option key={m} value={i + 1}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={financeFilterYear}
-                onChange={(e) => setFinanceFilterYear(Number(e.target.value))}
-                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
-              >
-                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                const res = await exportFinancialCsv()
-                if (res.success && res.path) showAlert('Exportado', `Arquivo salvo em ${res.path}`, 'success')
-                else if (!res.canceled && res.error) showAlert('Erro', friendlyError(res.error), 'error')
-              }}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white"
-            >
-              Exportar CSV
-            </button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Total Recebido (Renovações) - {MESES[financeFilterMonth - 1]}/{financeFilterYear}</p>
-              <p className="text-2xl font-bold text-green-500">
-                R$ {totalRenovacoesMes.toFixed(2).replace('.', ',')}
-              </p>
-              {financialByMethod.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  {financialByMethod.map((m) => (
-                    <p key={m.payment_method} className="text-xs text-gray-300">
-                      {m.payment_method}: R$ {(m.total ?? 0).toFixed(2).replace('.', ',')}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="bg-gray-800 border border-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">Total Recebido (Avulsos) - {MESES[financeFilterMonth - 1]}/{financeFilterYear}</p>
-              <p className="text-2xl font-bold text-white">
-                R$ {totalAvulsosMes.toFixed(2).replace('.', ',')}
-              </p>
-            </div>
-          </div>
-          <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-gray-700 bg-gray-700/50">
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Data</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Tipo</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300">Descrição</th>
-                    <th className="px-4 py-3 text-sm font-semibold text-gray-300 text-right">Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mixedTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhuma transação</td>
-                    </tr>
-                  ) : (
-                    mixedTransactions.map((t, i) => (
-                      <tr key={`${t.type}-${t.date}-${i}`} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                        <td className="px-4 py-3 text-gray-300">{format(new Date(t.date), 'dd/MM/yyyy HH:mm')}</td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={clsx(
-                              'px-2 py-1 rounded text-xs font-medium',
-                              t.type === 'renovacao' ? 'bg-green-900/60 text-green-300' : 'bg-gray-600 text-gray-200'
-                            )}
-                          >
-                            {t.type === 'renovacao' ? 'Renovação' : 'Avulso'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-white">{t.description}</td>
-                        <td className="px-4 py-3 text-right font-medium text-white">
-                          R$ {t.value.toFixed(2).replace('.', ',')}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+      {view === 'financeiro' && <Financeiro />}
 
       {view === 'excluidos' && <Excluidos />}
 
