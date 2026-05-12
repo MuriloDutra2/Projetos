@@ -761,7 +761,11 @@ app.whenReady().then(() => {
       const result = dbOperations.createFamilyGroup(plate)
       return { success: true, id: result.id }
     } catch (error) {
-      return { success: false, error: String(error) }
+      const msg = String(error)
+      if (msg.includes('UNIQUE') && msg.includes('family_groups.plate')) {
+        return { success: false, error: 'Já existe um grupo familiar com essa placa.' }
+      }
+      return { success: false, error: msg }
     }
   })
 
@@ -775,8 +779,8 @@ app.whenReady().then(() => {
       return { success: true, id: result.id }
     } catch (error) {
       const msg = String(error)
-      if (msg.includes('UNIQUE') || msg.includes('idx_family_members_group_cpf')) {
-        return { success: false, error: 'Esse CPF já está cadastrado neste grupo.' }
+      if (msg.includes('UNIQUE') || msg.includes('idx_family_members_cpf')) {
+        return { success: false, error: 'Esse CPF já está cadastrado em um grupo familiar.' }
       }
       return { success: false, error: msg }
     }
@@ -792,8 +796,8 @@ app.whenReady().then(() => {
       return { success: true }
     } catch (error) {
       const msg = String(error)
-      if (msg.includes('UNIQUE') || msg.includes('idx_family_members_group_cpf')) {
-        return { success: false, error: 'Esse CPF já está cadastrado neste grupo.' }
+      if (msg.includes('UNIQUE') || msg.includes('idx_family_members_cpf')) {
+        return { success: false, error: 'Esse CPF já está cadastrado em um grupo familiar.' }
       }
       return { success: false, error: msg }
     }
