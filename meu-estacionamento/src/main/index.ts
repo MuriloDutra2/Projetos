@@ -503,7 +503,7 @@ app.whenReady().then(() => {
     }
   )
 
-  const EXCLUDE_TICKET_PASSWORD = 'Kefit2026'
+  const EXCLUDE_TICKET_PASSWORD = '161021'
   const DELETE_CLIENT_PASSWORD = 'Kefit2026'
   const EXCLUDE_ALL_PASSWORD = 'murilo123@'
 
