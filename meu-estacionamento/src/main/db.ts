@@ -112,10 +112,20 @@ db.exec(`
   )
 `)
 
-db.exec(`
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_family_members_group_cpf
-  ON family_members(group_id, cpf)
-`)
+// Migração: o índice anterior era (group_id, cpf); agora o CPF é único globalmente.
+db.exec(`DROP INDEX IF EXISTS idx_family_members_group_cpf`)
+try {
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_family_members_cpf
+    ON family_members(cpf)
+  `)
+} catch (e) {
+  console.warn(
+    '[family_members] CPFs duplicados impedem criação do índice único. ' +
+      'Remova duplicatas manualmente pela tela "Grupos Familiares" e reinicie o app.',
+    e
+  )
+}
 
 ensureColumn('tickets', 'cpf', 'cpf TEXT')
 
