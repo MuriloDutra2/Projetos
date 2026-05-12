@@ -90,7 +90,8 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
       const res = await calculateValue({
         entrada: ticket.entrada,
         placa: ticket.placa,
-        tipo: ticket.tipo
+        tipo: ticket.tipo,
+        ...(ticket.cpf ? { cpf: ticket.cpf } : {})
       })
       setCheckoutValor(res.valor)
     } catch {

@@ -8,6 +8,7 @@ import {
   deleteFamilyGroup
 } from '../services/family'
 import { useDialog } from '../providers/DialogProvider'
+import { maskCPF, maskPlate, plateToRaw, unmask } from '../utils/masks'
 
 interface EditingMember {
   id: number
@@ -22,7 +23,7 @@ interface NewMemberForm {
 }
 
 export default function GruposFamiliares() {
-  const { showAlert } = useDialog()
+  const { showAlert, showConfirm } = useDialog()
   const [groups, setGroups] = useState<FamilyGroup[]>([])
   const [searchPlate, setSearchPlate] = useState('')
   const [showAddGroupForm, setShowAddGroupForm] = useState(false)
@@ -41,11 +42,11 @@ export default function GruposFamiliares() {
   }, [reload])
 
   const filtered = searchPlate.trim()
-    ? groups.filter((g) => g.plate.toUpperCase().includes(searchPlate.toUpperCase().replace(/[^A-Z0-9]/gi, '')))
+    ? groups.filter((g) => g.plate.includes(plateToRaw(searchPlate)))
     : groups
 
   const handleCreateGroup = async () => {
-    const plate = newGroupPlate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
+    const plate = plateToRaw(newGroupPlate)
     if (plate.length < 5) {
       showAlert('Atenção', 'Informe uma placa válida (mínimo 5 caracteres).', 'error')
       return
@@ -71,6 +72,10 @@ export default function GruposFamiliares() {
       showAlert('Atenção', 'Preencha nome e CPF do membro.', 'error')
       return
     }
+    if (unmask(newMemberForm.cpf).length !== 11) {
+      showAlert('Atenção', 'CPF deve ter 11 dígitos.', 'error')
+      return
+    }
     setLoading(true)
     try {
       const res = await addFamilyMember(newMemberForm.groupId, newMemberForm.name.trim(), newMemberForm.cpf.trim())
@@ -91,6 +96,10 @@ export default function GruposFamiliares() {
       showAlert('Atenção', 'Preencha nome e CPF.', 'error')
       return
     }
+    if (unmask(editingMember.cpf).length !== 11) {
+      showAlert('Atenção', 'CPF deve ter 11 dígitos.', 'error')
+      return
+    }
     setLoading(true)
     try {
       const res = await updateFamilyMember(editingMember.id, editingMember.name.trim(), editingMember.cpf.trim())
@@ -105,26 +114,36 @@ export default function GruposFamiliares() {
     }
   }
 
-  const handleDeleteMember = async (memberId: number) => {
-    if (!window.confirm('Remover este membro do grupo familiar?')) return
-    setLoading(true)
-    try {
-      await deleteFamilyMember(memberId)
-      await reload()
-    } finally {
-      setLoading(false)
-    }
+  const handleDeleteMember = (memberId: number) => {
+    showConfirm('Remover membro', 'Remover este membro do grupo familiar?', async () => {
+      setLoading(true)
+      try {
+        const res = await deleteFamilyMember(memberId)
+        if (!res.success) {
+          showAlert('Não é possível remover', res.error ?? 'Erro inesperado.', 'error')
+          return
+        }
+        await reload()
+      } finally {
+        setLoading(false)
+      }
+    })
   }
 
-  const handleDeleteGroup = async (groupId: number) => {
-    if (!window.confirm('Excluir este grupo familiar e todos os seus membros?')) return
-    setLoading(true)
-    try {
-      await deleteFamilyGroup(groupId)
-      await reload()
-    } finally {
-      setLoading(false)
-    }
+  const handleDeleteGroup = (groupId: number) => {
+    showConfirm('Excluir grupo', 'Excluir este grupo familiar e todos os seus membros?', async () => {
+      setLoading(true)
+      try {
+        const res = await deleteFamilyGroup(groupId)
+        if (!res.success) {
+          showAlert('Erro', res.error ?? 'Não foi possível excluir o grupo.', 'error')
+          return
+        }
+        await reload()
+      } finally {
+        setLoading(false)
+      }
+    })
   }
 
   return (
@@ -136,8 +155,8 @@ export default function GruposFamiliares() {
           <input
             type="text"
             placeholder="Buscar por placa..."
-            value={searchPlate}
-            onChange={(e) => setSearchPlate(e.target.value)}
+            value={maskPlate(searchPlate)}
+            onChange={(e) => setSearchPlate(plateToRaw(e.target.value))}
             className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase"
           />
           <button
@@ -154,9 +173,9 @@ export default function GruposFamiliares() {
             <div className="flex gap-3">
               <input
                 type="text"
-                placeholder="Placa (ex: ABC1234)"
-                value={newGroupPlate}
-                onChange={(e) => setNewGroupPlate(e.target.value.toUpperCase())}
+                placeholder="Placa (ex: ABC-1234)"
+                value={maskPlate(newGroupPlate)}
+                onChange={(e) => setNewGroupPlate(plateToRaw(e.target.value))}
                 className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 uppercase"
                 maxLength={8}
               />
@@ -187,7 +206,7 @@ export default function GruposFamiliares() {
           {filtered.map((group) => (
             <div key={group.id} className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-                <span className="text-white font-semibold text-lg">{group.plate}</span>
+                <span className="text-white font-semibold text-lg">{maskPlate(group.plate)}</span>
                 <button
                   onClick={() => handleDeleteGroup(group.id)}
                   disabled={loading}
@@ -211,9 +230,10 @@ export default function GruposFamiliares() {
                         />
                         <input
                           type="text"
-                          value={editingMember.cpf}
-                          onChange={(e) => setEditingMember({ ...editingMember, cpf: e.target.value })}
+                          value={maskCPF(editingMember.cpf)}
+                          onChange={(e) => setEditingMember({ ...editingMember, cpf: maskCPF(e.target.value) })}
                           placeholder="CPF"
+                          maxLength={14}
                           className="w-40 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
                         <button
@@ -233,7 +253,7 @@ export default function GruposFamiliares() {
                     ) : (
                       <div className="flex items-center gap-4">
                         <span className="text-white flex-1">{m.name}</span>
-                        <span className="text-gray-400 text-sm font-mono">{m.cpf}</span>
+                        <span className="text-gray-400 text-sm font-mono">{maskCPF(m.cpf)}</span>
                         <button
                           onClick={() => setEditingMember({ id: m.id, name: m.name, cpf: m.cpf })}
                           className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
@@ -264,9 +284,10 @@ export default function GruposFamiliares() {
                       />
                       <input
                         type="text"
-                        value={newMemberForm.cpf}
-                        onChange={(e) => setNewMemberForm({ ...newMemberForm, cpf: e.target.value })}
+                        value={maskCPF(newMemberForm.cpf)}
+                        onChange={(e) => setNewMemberForm({ ...newMemberForm, cpf: maskCPF(e.target.value) })}
                         placeholder="CPF (123.456.789-00)"
+                        maxLength={14}
                         className="w-44 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                       <button

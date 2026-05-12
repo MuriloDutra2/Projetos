@@ -28,6 +28,7 @@ export async function calculateValue(data: {
   entrada: string
   placa?: string
   tipo?: string
+  cpf?: string
 }): Promise<{ valor: number }> {
   return window.api.calculateValue(data)
 }

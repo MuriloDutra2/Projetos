@@ -112,6 +112,11 @@ db.exec(`
   )
 `)
 
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_family_members_group_cpf
+  ON family_members(group_id, cpf)
+`)
+
 ensureColumn('tickets', 'cpf', 'cpf TEXT')
 
 const stmts = {
@@ -329,8 +334,14 @@ const stmts = {
   updateFamilyMember: db.prepare(
     'UPDATE family_members SET name = ?, cpf = ? WHERE id = ?'
   ),
-  deleteFamilyMember: db.prepare('DELETE FROM family_members WHERE id = ?')
+  deleteFamilyMember: db.prepare('DELETE FROM family_members WHERE id = ?'),
+  getMemberById: db.prepare('SELECT id, group_id, name, cpf FROM family_members WHERE id = ?'),
+  hasActiveTicketByCpf: db.prepare(
+    "SELECT id FROM tickets WHERE cpf = ? AND status = 'ATIVO' LIMIT 1"
+  )
 }
+
+const normalizeCpfDigits = (cpf: string) => cpf.replace(/\D/g, '')
 
 export { effectiveBillingDayInMonth } from './garageDates'
 
@@ -404,8 +415,9 @@ export const dbOperations = {
   createTicket: (placa: string, tipo: string, entrada: string, cpf?: string) => {
     const result = stmts.createTicket.run(placa, tipo, entrada)
     const id = result.lastInsertRowid as number
-    if (cpf) {
-      db.prepare('UPDATE tickets SET cpf = ? WHERE id = ?').run(cpf, id)
+    const cpfNorm = cpf ? normalizeCpfDigits(cpf) : null
+    if (cpfNorm) {
+      db.prepare('UPDATE tickets SET cpf = ? WHERE id = ?').run(cpfNorm, id)
     }
     return id
   },
@@ -792,12 +804,21 @@ export const dbOperations = {
   },
 
   addFamilyMember: (groupId: number, name: string, cpf: string) => {
-    const result = stmts.insertFamilyMember.run(groupId, name, cpf, new Date().toISOString())
+    const cpfNorm = normalizeCpfDigits(cpf)
+    const result = stmts.insertFamilyMember.run(groupId, name, cpfNorm, new Date().toISOString())
     return { id: result.lastInsertRowid as number }
   },
 
   updateFamilyMember: (memberId: number, name: string, cpf: string) => {
-    stmts.updateFamilyMember.run(name, cpf, memberId)
+    const cpfNorm = normalizeCpfDigits(cpf)
+    stmts.updateFamilyMember.run(name, cpfNorm, memberId)
+  },
+
+  memberHasActiveTicket: (memberId: number): { blocked: boolean; cpf?: string } => {
+    const member = stmts.getMemberById.get(memberId) as { cpf?: string } | undefined
+    if (!member?.cpf) return { blocked: false }
+    const row = stmts.hasActiveTicketByCpf.get(member.cpf) as { id: number } | undefined
+    return row ? { blocked: true, cpf: member.cpf } : { blocked: false }
   },
 
   deleteFamilyMember: (memberId: number) => {
@@ -805,8 +826,11 @@ export const dbOperations = {
   },
 
   deleteFamilyGroup: (groupId: number) => {
-    stmts.deleteFamilyMembersByGroup.run(groupId)
-    stmts.deleteFamilyGroup.run(groupId)
+    const tx = db.transaction((id: number) => {
+      stmts.deleteFamilyMembersByGroup.run(id)
+      stmts.deleteFamilyGroup.run(id)
+    })
+    tx(groupId)
   }
 }
 
