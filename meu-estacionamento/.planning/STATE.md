@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 1, Plan 01-04 complete — ready for 01-05
+stopped_at: Phase 1, Plan 01-05 complete — all 5 plans done, pending verification
 last_updated: "2026-05-12"
-last_activity: 2026-05-12 — Plan 01-04 executed: extração Mensalistas de App.tsx com forwardRef + sub-componentes (App.tsx: 1273→800 linhas)
+last_activity: 2026-05-12 — Plan 01-05 executed: Inicio.tsx + useTickets + useGlobalShortcuts + App.tsx cleanup (1839→131 linhas, REF-02 fechado)
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 4
-  percent: 16
+  completed_plans: 5
+  percent: 20
 ---
 
 # Project State
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-05-09)
 ## Current Position
 
 Phase: 1 of 5 (Refatoração do Renderer)
-Plan: 4 of 5 in current phase (01-04 complete)
-Status: Executing — Plan 01-05 is next (final wave)
-Last activity: 2026-05-12 — Plan 01-04 complete (Mensalistas extraída: index.tsx 285L + 3 sub-components; App.tsx: 1273→800 linhas)
+Plan: 5 of 5 in current phase (01-05 complete — all plans done)
+Status: Verifying — all 5 plans executed, running verification
+Last activity: 2026-05-12 — Plan 01-05 complete (Inicio.tsx 637L + useTickets + useGlobalShortcuts; App.tsx: 1839→131 linhas)
 
 Progress: [█░░░░░░░░░] 20%
 
@@ -89,5 +89,5 @@ Items acknowledged and carried forward from previous milestone close:
 ## Session Continuity
 
 Last session: 2026-05-10
-Stopped at: Plan 01-04 complete — next is Plan 01-05
-Resume file: .planning/phases/01-refatora-o-do-renderer/01-05-PLAN.md
+Stopped at: All 5 plans complete — running phase verification
+Resume file: .planning/phases/01-refatora-o-do-renderer/01-VERIFICATION.md
