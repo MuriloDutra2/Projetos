@@ -9,6 +9,7 @@ import Relatorio from './views/Relatorio'
 import Financeiro from './views/Financeiro'
 import Mensalistas, { type MensalistasHandle } from './views/Mensalistas'
 import GruposFamiliares from './views/GruposFamiliares'
+import Calculadora from './views/Calculadora'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
 
 
@@ -108,6 +109,19 @@ function App(): React.JSX.Element {
         </button>
         <button
           type="button"
+          onClick={() => setView('calculadora')}
+          className={clsx(
+            'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
+            view === 'calculadora' ? 'bg-red-600/80 text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+          )}
+          title="Calculadora Pro-Rata"
+        >
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
+        </button>
+        <button
+          type="button"
           onClick={() => setView('excluidos')}
           className={clsx(
             'w-12 h-12 rounded-lg flex items-center justify-center transition-colors',
@@ -141,6 +155,7 @@ function App(): React.JSX.Element {
       {view === 'mensalistas' && <Mensalistas ref={mensalistasRef} />}
       {view === 'familias' && <GruposFamiliares />}
       {view === 'financeiro' && <Financeiro />}
+      {view === 'calculadora' && <Calculadora />}
       {view === 'excluidos' && <Excluidos />}
       {view === 'configuracoes' && <Configuracoes />}
     </div>
