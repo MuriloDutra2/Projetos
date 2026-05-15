@@ -510,7 +510,7 @@ app.whenReady().then(() => {
   )
 
   const EXCLUDE_TICKET_PASSWORD = '161021'
-  const DELETE_CLIENT_PASSWORD = 'Kefit2026'
+  const DELETE_CLIENT_PASSWORD = '161021'
   const EXCLUDE_ALL_PASSWORD = 'murilo123@'
 
   ipcMain.handle(
