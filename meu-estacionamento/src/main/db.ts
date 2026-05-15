@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3'
 import { join, dirname } from 'path'
 import { app } from 'electron'
-import { existsSync, mkdirSync, copyFileSync, readdirSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, copyFileSync, readdirSync, unlinkSync, readFileSync, writeFileSync } from 'fs'
+import { randomUUID } from 'crypto'
 import { effectiveBillingDayInMonth } from './garageDates'
 
 const dbPath =
@@ -162,6 +163,48 @@ try {
 }
 
 ensureColumn('tickets', 'cpf', 'cpf TEXT')
+
+// ── Sync LAN: identificador único deste nó ──────────────────────────────
+const nodeIdPath = join(dirname(dbPath), 'node-id.txt')
+let NODE_ID: string
+if (existsSync(nodeIdPath)) {
+  NODE_ID = readFileSync(nodeIdPath, 'utf-8').trim()
+} else {
+  NODE_ID = randomUUID()
+  mkdirSync(dirname(nodeIdPath), { recursive: true })
+  writeFileSync(nodeIdPath, NODE_ID, 'utf-8')
+}
+
+// ── Sync LAN: tabela de log de mudanças ─────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sync_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    row_id TEXT NOT NULL,
+    operation TEXT NOT NULL CHECK(operation IN ('INSERT', 'UPDATE', 'DELETE')),
+    payload TEXT NOT NULL
+  )
+`)
+
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_seq ON sync_log(seq)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_node ON sync_log(node_id, seq)`)
+
+/** Registra uma operação de escrita no sync_log para replicação LAN. */
+function logSync(
+  tableName: string,
+  rowId: string | number,
+  operation: 'INSERT' | 'UPDATE' | 'DELETE',
+  payload: Record<string, unknown>
+): void {
+  db.prepare(
+    'INSERT INTO sync_log (node_id, timestamp, table_name, row_id, operation, payload) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(NODE_ID, new Date().toISOString(), tableName, String(rowId), operation, JSON.stringify(payload))
+}
+
+// Exporta para uso em outros módulos (ex: servidor sync)
+export { NODE_ID, logSync }
 
 const stmts = {
   getAllActive: db.prepare(
@@ -463,16 +506,26 @@ export const dbOperations = {
     if (cpfNorm) {
       db.prepare('UPDATE tickets SET cpf = ? WHERE id = ?').run(cpfNorm, id)
     }
+    logSync('tickets', id, 'INSERT', { id, placa, tipo, entrada, cpf: cpfNorm, status: 'ATIVO' })
     return id
   },
   checkoutTicket: (id: number, valor: number, saida: string) => {
     stmts.checkoutTicket.run('FINALIZADO', saida, valor, id)
+    logSync('tickets', id, 'UPDATE', { id, status: 'FINALIZADO', saida, valor })
   },
   excludeTicket: (id: number) => {
-    stmts.excludeTicket.run(new Date().toISOString(), id)
+    const saida = new Date().toISOString()
+    stmts.excludeTicket.run(saida, id)
+    logSync('tickets', id, 'UPDATE', { id, status: 'EXCLUIDO', saida, valor: 0 })
   },
   excludeAllActiveTickets: () => {
-    stmts.excludeAllActiveTickets.run(new Date().toISOString())
+    const saida = new Date().toISOString()
+    // Buscar IDs antes de excluir para logar cada um
+    const activeTickets = stmts.getAllActive.all() as { id: number }[]
+    stmts.excludeAllActiveTickets.run(saida)
+    for (const t of activeTickets) {
+      logSync('tickets', t.id, 'UPDATE', { id: t.id, status: 'EXCLUIDO', saida, valor: 0 })
+    }
   },
   getExcludedTickets: () => stmts.getExcludedTickets.all() as { id: number; placa: string; tipo: string; entrada: string; saida: string }[],
 
@@ -505,12 +558,15 @@ export const dbOperations = {
       data.garage_billing_month ?? null
     )
     const clientId = result.lastInsertRowid as number
+    const normalizedPlates: string[] = []
     for (const plate of data.plates) {
       const raw = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
       if (raw) {
         stmts.insertClientVehicle.run(clientId, raw)
+        normalizedPlates.push(raw)
       }
     }
+    logSync('clients', clientId, 'INSERT', { ...data, id: clientId, plates: normalizedPlates, created_at: createdAt })
     return clientId
   },
 
@@ -564,6 +620,7 @@ export const dbOperations = {
 
   updateClientActive: (clientId: number, active: number) => {
     stmts.updateClientActive.run(active, clientId)
+    logSync('clients', clientId, 'UPDATE', { id: clientId, active })
   },
 
   updateClient: (data: {
@@ -577,6 +634,7 @@ export const dbOperations = {
     garage_billing_day?: number | null
     garage_billing_month?: number | null
   }) => {
+    const normalizedPlates: string[] = []
     const updateTransaction = db.transaction(() => {
       stmts.updateClient.run(
         data.name,
@@ -593,10 +651,12 @@ export const dbOperations = {
         const raw = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
         if (raw) {
           stmts.insertClientVehicle.run(data.id, raw)
+          normalizedPlates.push(raw)
         }
       }
     })
     updateTransaction()
+    logSync('clients', data.id, 'UPDATE', { ...data, plates: normalizedPlates })
   },
 
   getVehicleSubscription: (plate: string) => {
@@ -675,6 +735,7 @@ export const dbOperations = {
       data.qtyMotos,
       now
     )
+    logSync('daily_reports', dateStr, 'UPDATE', { report_date: dateStr, ...data, created_at: now })
   },
 
   getDailyUsedMinutes: (placa: string, data: string) => {
@@ -686,6 +747,7 @@ export const dbOperations = {
   addDailyUsedMinutes: (placa: string, data: string, minutos: number) => {
     const raw = placa.replace(/[^A-Z0-9]/gi, '').toUpperCase()
     stmts.upsertDailyUsage.run(raw, data, minutos)
+    logSync('daily_free_usage', `${raw}:${data}`, 'UPDATE', { placa: raw, data, minutos })
   },
 
   renewSubscription: (clientId: number, planType: string, amount: number) => {
@@ -764,6 +826,15 @@ export const dbOperations = {
       const raw = (v.plate ?? '').replace(/[^A-Z0-9]/gi, '').toUpperCase()
       if (raw) stmts.updateActiveTicketTypeByPlate.run(tipoAtivo, raw)
     }
+    logSync('subscription_payments', data.clientId, 'INSERT', {
+      clientId: data.clientId,
+      planType: data.planType,
+      amount: data.amount,
+      months,
+      paymentMethod: data.paymentMethod,
+      notes,
+      newExpiryStr
+    })
     return newExpiryStr
   },
 
@@ -797,6 +868,7 @@ export const dbOperations = {
     } finally {
       db.pragma('foreign_keys = ON')
     }
+    logSync('clients', clientId, 'DELETE', { id: clientId, name })
   },
 
   getFinancialSummaryByMethod: (month: number, year: number) => {
@@ -843,19 +915,26 @@ export const dbOperations = {
 
   createFamilyGroup: (plate: string) => {
     const raw = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase()
-    const result = stmts.insertFamilyGroup.run(raw, new Date().toISOString())
-    return { id: result.lastInsertRowid as number }
+    const createdAt = new Date().toISOString()
+    const result = stmts.insertFamilyGroup.run(raw, createdAt)
+    const id = result.lastInsertRowid as number
+    logSync('family_groups', id, 'INSERT', { id, plate: raw, created_at: createdAt })
+    return { id }
   },
 
   addFamilyMember: (groupId: number, name: string, cpf: string) => {
     const cpfNorm = normalizeCpfDigits(cpf)
-    const result = stmts.insertFamilyMember.run(groupId, name, cpfNorm, new Date().toISOString())
-    return { id: result.lastInsertRowid as number }
+    const createdAt = new Date().toISOString()
+    const result = stmts.insertFamilyMember.run(groupId, name, cpfNorm, createdAt)
+    const id = result.lastInsertRowid as number
+    logSync('family_members', id, 'INSERT', { id, group_id: groupId, name, cpf: cpfNorm, created_at: createdAt })
+    return { id }
   },
 
   updateFamilyMember: (memberId: number, name: string, cpf: string) => {
     const cpfNorm = normalizeCpfDigits(cpf)
     stmts.updateFamilyMember.run(name, cpfNorm, memberId)
+    logSync('family_members', memberId, 'UPDATE', { id: memberId, name, cpf: cpfNorm })
   },
 
   memberHasActiveTicket: (memberId: number): { blocked: boolean; cpf?: string } => {
@@ -867,6 +946,7 @@ export const dbOperations = {
 
   deleteFamilyMember: (memberId: number) => {
     stmts.deleteFamilyMember.run(memberId)
+    logSync('family_members', memberId, 'DELETE', { id: memberId })
   },
 
   deleteFamilyGroup: (groupId: number) => {
@@ -875,7 +955,34 @@ export const dbOperations = {
       stmts.deleteFamilyGroup.run(id)
     })
     tx(groupId)
-  }
+    logSync('family_groups', groupId, 'DELETE', { id: groupId })
+  },
+
+  // ── Sync LAN: operações do log de mudanças ──────────────────────────────
+
+  /** Retorna entradas do sync_log com seq > afterSeq (para replicação incremental). */
+  getSyncLogAfter: (afterSeq: number, limit = 500) => {
+    return db
+      .prepare('SELECT * FROM sync_log WHERE seq > ? ORDER BY seq ASC LIMIT ?')
+      .all(afterSeq, limit) as {
+      seq: number
+      node_id: string
+      timestamp: string
+      table_name: string
+      row_id: string
+      operation: string
+      payload: string
+    }[]
+  },
+
+  /** Retorna o maior seq do sync_log (para saber até onde já sincronizou). */
+  getMaxSyncSeq: () => {
+    const row = db.prepare('SELECT COALESCE(MAX(seq), 0) as max_seq FROM sync_log').get() as { max_seq: number }
+    return row.max_seq
+  },
+
+  /** Retorna o NODE_ID desta instalação. */
+  getNodeId: () => NODE_ID
 }
 
 export default db
