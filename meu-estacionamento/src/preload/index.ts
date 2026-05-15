@@ -103,7 +103,12 @@ const api = {
   updateFamilyMember: (memberId: number, name: string, cpf: string) =>
     ipcRenderer.invoke('update-family-member', { memberId, name, cpf }),
   deleteFamilyMember: (memberId: number) => ipcRenderer.invoke('delete-family-member', memberId),
-  deleteFamilyGroup: (groupId: number) => ipcRenderer.invoke('delete-family-group', groupId)
+  deleteFamilyGroup: (groupId: number) => ipcRenderer.invoke('delete-family-group', groupId),
+
+  // ── Sync LAN ──
+  syncStartServer: () => ipcRenderer.invoke('sync-start-server'),
+  syncStopServer: () => ipcRenderer.invoke('sync-stop-server'),
+  syncServerInfo: () => ipcRenderer.invoke('sync-server-info')
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

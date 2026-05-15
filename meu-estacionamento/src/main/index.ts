@@ -27,6 +27,7 @@ import { dbOperations, translateDbError } from './db'
 import { calcularValor, splitStayIntoLocalDaySegments } from './calculations'
 import { printEntryTicket, printExitTicket, printSubscriptionReceipt } from './printer'
 import { getConfig, saveConfig } from './config'
+import { startSyncServer, stopSyncServer, getSyncServerInfo } from './syncServer'
 
 
 let mainWindow: BrowserWindow | null = null
@@ -825,6 +826,29 @@ app.whenReady().then(() => {
     }
   })
 
+  // ── Sync LAN ──────────────────────────────────────────────────────────
+  ipcMain.handle('sync-start-server', () => {
+    try {
+      const info = startSyncServer()
+      return { success: true, ...info }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('sync-stop-server', () => {
+    try {
+      stopSyncServer()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle('sync-server-info', () => {
+    return getSyncServerInfo()
+  })
+
   createWindow()
 
   app.on('activate', function () {
@@ -838,6 +862,7 @@ app.whenReady().then(() => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
+  stopSyncServer()
   if (process.platform !== 'darwin') {
     app.quit()
   }

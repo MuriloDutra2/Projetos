@@ -109,6 +109,11 @@ declare global {
       updateFamilyMember: (memberId: number, name: string, cpf: string) => Promise<{ success: boolean; error?: string }>
       deleteFamilyMember: (memberId: number) => Promise<{ success: boolean; error?: string }>
       deleteFamilyGroup: (groupId: number) => Promise<{ success: boolean; error?: string }>
+
+      // Sync LAN
+      syncStartServer: () => Promise<{ success: boolean; port?: number; ips?: string[]; error?: string }>
+      syncStopServer: () => Promise<{ success: boolean; error?: string }>
+      syncServerInfo: () => Promise<{ running: boolean; port: number; ips: string[]; nodeId: string }>
     }
   }
   interface FamilyMember {
