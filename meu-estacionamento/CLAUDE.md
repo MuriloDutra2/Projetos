@@ -35,20 +35,41 @@ See `.planning/codebase/STACK.md` for the full breakdown. Headlines:
 
 - **Main process:** Electron + TypeScript (`src/main/`), `electron-vite` build, `electron-builder` packaging
 - **Preload:** `src/preload/` — currently exposes both a typed `api` and a broad `electronAPI` (the latter is on the v2 hardening backlog)
-- **Renderer:** React 18 + Tailwind CSS 3 (`src/renderer/`), entry point `App.tsx` (currently 1839 lines — Phase 1 of the roadmap refactors this)
-- **Persistence:** SQLite via better-sqlite3 (or equivalent), file at `parking.db` in `userData`
+- **Renderer:** React 18 + Tailwind CSS 3 (`src/renderer/`), entry point `App.tsx` (refatorado — god-component foi dividido)
+- **Persistence:** SQLite via better-sqlite3, arquivo em `parking.db` no `userData`
 - **Tests:** Vitest (`__tests__/`), config at `vitest.config.ts`
 - **Manual UAT:** `TESTES-ANTES-DO-PENDRIVE.md` is the pre-deployment checklist
 
+## Estado atual (junho/2026)
+
+### Já concluído (branch `main`)
+- ✅ **REF (Phase 1)** — `App.tsx` refatorado, god-component dividido
+- ✅ **BAK (Phase 3)** — Backup automático do `parking.db` a cada startup (rolling 10 cópias em `userData/backups/`)
+- ✅ **FAM (Phase 5)** — Bug de tolerância de família corrigido (CPF único global)
+- ✅ **Calculadora Pro-Rata** — Nova aba para calcular valor proporcional de novos mensalistas (`src/renderer/src/views/Calculadora.tsx`)
+- ✅ **Senhas unificadas** — Senha de excluir mensalista unificada com excluir veículo do pátio (`161021`)
+
+### Pendente (branch `main`)
+- ⏳ **SEC (Phase 2)** — `parking.db` ainda no histórico git com PII real — precisa de `git filter-repo`
+- ⏳ **AUTH (Phase 4)** — Senhas admin ainda hardcoded em `src/main/index.ts` (linha ~512)
+
+### Em andamento (branch `feature/lan-sync`)
+Novo milestone: **Sincronização LAN entre dois PCs** (mesmo estacionamento, rede local).
+- ✅ **Fase 1** — Tabela `sync_log` + `node_id` único por instalação (`src/main/db.ts`)
+- ✅ **Fase 2** — Servidor HTTP (porta 3457) + WebSocket para broadcast em tempo real (`src/main/syncServer.ts`)
+- ⏳ **Fase 3** — Modo cliente: conectar ao servidor via LAN
+- ⏳ **Fase 4** — Sync bidirecional automático com resolução de conflitos
+- ⏳ **Fase 5** — Tela de configuração (escolher modo servidor/cliente, IP)
+- ⏳ **Fase 6** — Testes de robustez (queda de rede, reconexão, conflitos)
+
+**Arquitetura do sync:** Cada PC tem SQLite local e funciona 100% offline. Quando conectados, o servidor expõe REST + WebSocket; o cliente consome. Sync incremental via `sync_log.seq`. Resolução: última escrita ganha (timestamp).
+
 ## Known concerns (audit)
 
-`.planning/codebase/CONCERNS.md` lists every audit finding. The high-impact items addressed by the current milestone:
+`.planning/codebase/CONCERNS.md` lists every audit finding. Itens ainda abertos:
 
-- Hardcoded admin passwords in `src/main/index.ts:506-508` → Phase 4 (AUTH)
-- `parking.db` tracked in git history with real PII → Phase 2 (SEC)
-- `App.tsx` is a 1839-line god-component → Phase 1 (REF)
-- No automatic backup of `parking.db` → Phase 3 (BAK)
-- Family-shared-car tolerance bug (counted per plate, not per CPF) → Phase 5 (FAM)
+- Hardcoded admin passwords in `src/main/index.ts` → Phase 4 (AUTH) — pendente
+- `parking.db` tracked in git history with real PII → Phase 2 (SEC) — pendente
 
 Concerns intentionally **not** in this milestone (deferred to v2 or out of scope):
 - `electronAPI` removal from preload (v2 hardening)
