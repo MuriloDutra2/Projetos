@@ -395,6 +395,23 @@ app.whenReady().then(() => {
     }
   )
 
+  ipcMain.handle('get-finance-month-data', (_event, data: { month: number; year: number }) => {
+    try {
+      return dbOperations.getFinanceMonthData(data.month, data.year)
+    } catch (error) {
+      console.error('Erro ao buscar dados financeiros do mês:', error)
+      return {
+        totalAvulsos: 0,
+        countAvulsos: 0,
+        totalRenovacoes: 0,
+        countRenovacoes: 0,
+        byMethod: [],
+        tickets: [],
+        payments: []
+      }
+    }
+  })
+
   ipcMain.handle('get-client-statement', (_event, clientId: number) => {
     try {
       return dbOperations.getClientStatement(clientId)
@@ -404,12 +421,15 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('export-financial-csv', async () => {
+  ipcMain.handle('export-financial-csv', async (_event, data?: { month?: number; year?: number }) => {
     try {
-      const tickets = dbOperations.getAllFinishedTicketsForFinance() as any[]
-      const payments = dbOperations.getFinancialHistory() as any[]
+      // Com mês/ano exporta o mês local completo; sem filtro, todo o histórico (sem LIMIT).
+      const monthData =
+        data?.month && data?.year
+          ? dbOperations.getFinanceMonthData(data.month, data.year)
+          : dbOperations.getFinanceDataForRange()
       const rows: { date: string; type: string; description: string; value: number }[] = []
-      tickets.forEach((t) => {
+      monthData.tickets.forEach((t) => {
         rows.push({
           date: t.saida ?? t.entrada,
           type: 'Avulso',
@@ -417,7 +437,7 @@ app.whenReady().then(() => {
           value: t.valor ?? 0
         })
       })
-      payments.forEach((p) => {
+      monthData.payments.forEach((p) => {
         rows.push({
           date: p.payment_date,
           type: 'Renovação',
@@ -432,9 +452,13 @@ app.whenReady().then(() => {
           `${new Date(r.date).toLocaleString('pt-BR')};${r.type};"${(r.description ?? '').replace(/"/g, '""')}";${(r.value ?? 0).toFixed(2).replace('.', ',')}`
       )
       const csv = [header, ...lines].join('\n')
+      const suffix =
+        data?.month && data?.year
+          ? `${data.year}-${String(data.month).padStart(2, '0')}`
+          : 'completo'
       const { canceled, filePath } = await dialog.showSaveDialog({
         title: 'Exportar CSV',
-        defaultPath: `financeiro-${new Date().toISOString().slice(0, 10)}.csv`,
+        defaultPath: `financeiro-${suffix}.csv`,
         filters: [{ name: 'CSV', extensions: ['csv'] }]
       })
       if (canceled || !filePath) return { success: false, canceled: true }

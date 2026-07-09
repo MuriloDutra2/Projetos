@@ -1,11 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
-import { format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns'
+import { format } from 'date-fns'
 import { clsx } from 'clsx'
-import { getFinancialHistory, getFinancialSummaryByMethod, exportFinancialCsv } from '../services/financial'
-import { getHistory } from '../services/reports'
+import { getFinanceMonthData, exportFinancialCsv, type FinanceMonthData } from '../services/financial'
 import { useDialog } from '../providers/DialogProvider'
 import { friendlyError } from '../utils/errorHandler'
-import type { HistoryEntry } from '../types/domain'
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
@@ -14,54 +12,36 @@ export default function Financeiro(): React.JSX.Element {
   const now = new Date()
   const [financeFilterMonth, setFinanceFilterMonth] = useState<number>(now.getMonth() + 1)
   const [financeFilterYear, setFinanceFilterYear] = useState<number>(now.getFullYear())
-  const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [financialHistory, setFinancialHistory] = useState<any[]>([])
-  const [financialByMethod, setFinancialByMethod] = useState<{ payment_method: string; total: number }[]>([])
+  const [monthData, setMonthData] = useState<FinanceMonthData | null>(null)
 
   useEffect(() => {
-    getHistory().then(setHistory).catch(console.error)
-    getFinancialHistory().then(setFinancialHistory).catch(console.error)
-    getFinancialSummaryByMethod({ month: financeFilterMonth, year: financeFilterYear })
-      .then(setFinancialByMethod)
+    // Totais somados no SQL sobre o mês completo (antes: soma no JS de listas com LIMIT)
+    getFinanceMonthData({ month: financeFilterMonth, year: financeFilterYear })
+      .then(setMonthData)
       .catch(console.error)
   }, [financeFilterMonth, financeFilterYear])
 
-  // D-09: useMemo para evitar re-cálculo a cada render
-  const { mixedTransactions, totalAvulsosMes, totalRenovacoesMes } = useMemo(() => {
-    const filterDate = new Date(financeFilterYear, financeFilterMonth - 1, 1)
-    const monthStart = startOfMonth(filterDate)
-    const monthEnd = endOfMonth(filterDate)
-    const inMonth = (d: string): boolean => isWithinInterval(new Date(d), { start: monthStart, end: monthEnd })
+  const totalAvulsosMes = monthData?.totalAvulsos ?? 0
+  const totalRenovacoesMes = monthData?.totalRenovacoes ?? 0
+  const financialByMethod = monthData?.byMethod ?? []
 
-    const avulsosMes = history
-      .filter((h) => h.saida && inMonth(h.saida))
-      .reduce((s, h) => s + (h.valor ?? 0), 0)
-
-    const renovacoesMes = financialHistory
-      .filter((p) => inMonth(p.payment_date))
-      .reduce((s, p) => s + (p.amount ?? 0), 0)
-
-    const mixedTransactionsAll = [
-      ...history
-        .filter((h) => h.saida)
-        .map((h) => ({
-          date: h.saida,
-          type: 'avulso' as const,
-          description: `Ticket ${h.placa}`,
-          value: h.valor ?? 0
-        })),
-      ...financialHistory.map((p) => ({
+  const mixedTransactions = useMemo(() => {
+    if (!monthData) return []
+    return [
+      ...monthData.tickets.map((h) => ({
+        date: h.saida,
+        type: 'avulso' as const,
+        description: `Ticket ${h.placa}`,
+        value: h.valor ?? 0
+      })),
+      ...monthData.payments.map((p) => ({
         date: p.payment_date,
         type: 'renovacao' as const,
         description: `Renovação - ${p.client_name}${p.payment_method ? ` (${p.payment_method})` : ''}`,
         value: p.amount ?? 0
       }))
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
-    const mixed = mixedTransactionsAll.filter((t) => inMonth(t.date))
-
-    return { mixedTransactions: mixed, totalAvulsosMes: avulsosMes, totalRenovacoesMes: renovacoesMes }
-  }, [history, financialHistory, financeFilterMonth, financeFilterYear])
+  }, [monthData])
 
   return (
     <div className="flex-1 p-6 overflow-y-auto">
@@ -94,13 +74,13 @@ export default function Financeiro(): React.JSX.Element {
         <button
           type="button"
           onClick={async () => {
-            const res = await exportFinancialCsv()
+            const res = await exportFinancialCsv({ month: financeFilterMonth, year: financeFilterYear })
             if (res.success && res.path) showAlert('Exportado', `Arquivo salvo em ${res.path}`, 'success')
             else if (!res.canceled && res.error) showAlert('Erro', friendlyError(res.error), 'error')
           }}
           className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white"
         >
-          Exportar CSV
+          Exportar CSV do mês
         </button>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">

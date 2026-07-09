@@ -73,6 +73,15 @@ declare global {
       renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
       getFinancialHistory: () => Promise<any[]>
       getFinancialSummaryByMethod: (data: { month: number; year: number }) => Promise<{ payment_method: string; total: number }[]>
+      getFinanceMonthData: (data: { month: number; year: number }) => Promise<{
+        totalAvulsos: number
+        countAvulsos: number
+        totalRenovacoes: number
+        countRenovacoes: number
+        byMethod: { payment_method: string; total: number }[]
+        tickets: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number | null }[]
+        payments: any[]
+      }>
       getClientStatement: (clientId: number) => Promise<{
         client: { id: number; name: string; cpf?: string; phone?: string; plan_type: string; expiry_date: string; active: number }
         payments: {
@@ -89,7 +98,7 @@ declare global {
         avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string | null; valor: number }[]
         totals: { payments: number; avulsos: number }
       } | null>
-      exportFinancialCsv: () => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
+      exportFinancialCsv: (data?: { month?: number; year?: number }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
       getPrinters: () => Promise<{ name: string; displayName: string }[]>
       getPrinterConfig: () => Promise<string>
       savePrinterConfig: (printerName: string) => Promise<{ success: boolean }>

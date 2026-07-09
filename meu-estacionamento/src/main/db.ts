@@ -216,7 +216,7 @@ const stmts = {
     "SELECT id, placa, tipo, entrada, saida, valor FROM tickets WHERE status = 'FINALIZADO' ORDER BY saida DESC LIMIT 50"
   ),
   /** Todos os veículos finalizados no dia local (saída em [início, fim) do dia em ISO UTC). */
-  getHistoryForDay: db.prepare(`
+  getFinishedTicketsForRange: db.prepare(`
     SELECT id, placa, tipo, entrada, saida, valor
     FROM tickets
     WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?
@@ -229,9 +229,6 @@ const stmts = {
     WHERE status = 'FINALIZADO' AND saida >= ?
     ORDER BY saida DESC
   `),
-  getAllFinishedForFinance: db.prepare(
-    "SELECT id, placa, tipo, entrada, saida, valor, 'ticket' as source FROM tickets WHERE status = 'FINALIZADO' ORDER BY saida DESC LIMIT 200"
-  ),
   getActiveByPlaca: db.prepare(
     "SELECT id FROM tickets WHERE placa = ? AND status = 'ATIVO' LIMIT 1"
   ),
@@ -309,6 +306,14 @@ const stmts = {
     ORDER BY sp.payment_date DESC
     LIMIT 200
   `),
+  /** Pagamentos de renovação no intervalo [início, fim) ISO UTC — sem LIMIT (totais e CSV). */
+  getPaymentsForRange: db.prepare(`
+    SELECT sp.*, COALESCE(c.name, sp.payer_display_name, 'Cliente removido') as client_name
+    FROM subscription_payments sp
+    LEFT JOIN clients c ON c.id = sp.client_id
+    WHERE sp.payment_date >= ? AND sp.payment_date < ?
+    ORDER BY sp.payment_date DESC
+  `),
   getFinancialHistoryByMethod: db.prepare(`
     SELECT COALESCE(payment_method, 'Não informado') as payment_method, COALESCE(SUM(amount), 0) as total
     FROM subscription_payments
@@ -357,11 +362,11 @@ const stmts = {
     WHERE status = 'ATIVO' AND placa = ?
   `),
   /** Total avulsos (valor) no dia local (saída em [início, fim) em ISO UTC). */
-  getTotalAvulsosForDay: db.prepare(
+  getTotalAvulsosForRange: db.prepare(
     "SELECT COALESCE(SUM(valor), 0) as total FROM tickets WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?"
   ),
   /** Contagem e valor de planos vendidos (renovações) no dia local ([início, fim) em ISO UTC). */
-  getPlanosVendidosForDay: db.prepare(`
+  getPlanosVendidosForRange: db.prepare(`
     SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
     FROM subscription_payments WHERE payment_date >= ? AND payment_date < ?
   `),
@@ -494,7 +499,6 @@ export function translateDbError(error: unknown): string {
 export const dbOperations = {
   getAllActiveTickets: () => stmts.getAllActive.all(),
   getHistory: () => stmts.getHistory.all(),
-  getAllFinishedTicketsForFinance: () => stmts.getAllFinishedForFinance.all(),
 
   getCurrentCompetencyMonth: (nowDate?: Date) => {
     const now = nowDate ?? new Date()
@@ -704,7 +708,7 @@ export const dbOperations = {
 
   getHistoryForDay: (dateStr: string) => {
     const { start, end } = localDayToIsoRange(dateStr)
-    return stmts.getHistoryForDay.all(start, end)
+    return stmts.getFinishedTicketsForRange.all(start, end)
   },
 
   getHistoryLast24h: () => {
@@ -714,8 +718,8 @@ export const dbOperations = {
 
   getDailyReport: (dateStr: string) => {
     const { start, end } = localDayToIsoRange(dateStr)
-    const avulsosRow = stmts.getTotalAvulsosForDay.get(start, end) as { total: number } | undefined
-    const planosRow = stmts.getPlanosVendidosForDay.get(start, end) as { count: number; total: number } | undefined
+    const avulsosRow = stmts.getTotalAvulsosForRange.get(start, end) as { total: number } | undefined
+    const planosRow = stmts.getPlanosVendidosForRange.get(start, end) as { count: number; total: number } | undefined
     const saved = stmts.getSavedDailyReport.get(dateStr) as {
       report_date: string
       total_avulsos: number
@@ -892,6 +896,44 @@ export const dbOperations = {
   getFinancialSummaryByMethod: (month: number, year: number) => {
     const { start, end } = localMonthToIsoRange(`${year}-${String(month).padStart(2, '0')}`)
     return stmts.getFinancialHistoryByMethod.all(start, end)
+  },
+
+  /**
+   * Dados financeiros completos de um intervalo [início, fim) ISO UTC,
+   * somados no SQL e sem LIMIT (substitui os totais do Financeiro que
+   * somavam listas truncadas no JS). Intervalo aberto = todo o histórico.
+   */
+  getFinanceDataForRange: (start = '0000-01-01', end = '9999-12-31') => {
+    const avulsosRow = stmts.getTotalAvulsosForRange.get(start, end) as { total: number } | undefined
+    const planosRow = stmts.getPlanosVendidosForRange.get(start, end) as { count: number; total: number } | undefined
+    const tickets = stmts.getFinishedTicketsForRange.all(start, end) as {
+      id: number
+      placa: string
+      tipo: string
+      entrada: string
+      saida: string
+      valor: number | null
+    }[]
+    const payments = stmts.getPaymentsForRange.all(start, end) as any[]
+    const byMethod = stmts.getFinancialHistoryByMethod.all(start, end) as {
+      payment_method: string
+      total: number
+    }[]
+    return {
+      totalAvulsos: avulsosRow?.total ?? 0,
+      countAvulsos: tickets.length,
+      totalRenovacoes: planosRow?.total ?? 0,
+      countRenovacoes: planosRow?.count ?? 0,
+      byMethod,
+      tickets,
+      payments
+    }
+  },
+
+  /** Dados financeiros do mês civil local. */
+  getFinanceMonthData: (month: number, year: number) => {
+    const { start, end } = localMonthToIsoRange(`${year}-${String(month).padStart(2, '0')}`)
+    return dbOperations.getFinanceDataForRange(start, end)
   },
 
   getClientStatement: (clientId: number) => {

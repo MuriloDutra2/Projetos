@@ -218,7 +218,7 @@ sai ou vira "consolidado do dia" = soma dos dois turnos).
 | 1 | Fuso nas agregações | `fix(finance): agregações por intervalo local` ✅ (573ccbb) | `npm test` verde + UAT saída 22h |
 | 2 | Fuso operacional (1b) | ✅ junto com 1c (mesmo módulo de helpers) | UAT entrada repetida + badge devedor |
 | 3 | Status vs vencimento (1c) | `fix(mensalistas): em dia se vencimento cobre hoje` ✅ | UAT caso do vídeo (pago ≠ atraso) |
-| 4 | Totais sem LIMIT | `fix(finance): totais mensais via SQL sem limite` | Financeiro = CSV = soma manual |
+| 4 | Totais sem LIMIT | `fix(finance): totais mensais via SQL sem limite` ✅ | Financeiro = CSV = soma manual |
 | 5 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` | UAT renovação 3 meses |
 | 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` | Checklist pátio completo |
 | 7 | Turnos | `feat(caixa): fechamento por turno de 12h` | UAT fechamento diurno + noturno |

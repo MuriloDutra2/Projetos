@@ -76,8 +76,11 @@ const api = {
   getFinancialHistory: () => ipcRenderer.invoke('get-financial-history'),
   getFinancialSummaryByMethod: (data: { month: number; year: number }) =>
     ipcRenderer.invoke('get-financial-summary-by-method', data),
+  getFinanceMonthData: (data: { month: number; year: number }) =>
+    ipcRenderer.invoke('get-finance-month-data', data),
   getClientStatement: (clientId: number) => ipcRenderer.invoke('get-client-statement', clientId),
-  exportFinancialCsv: () => ipcRenderer.invoke('export-financial-csv'),
+  exportFinancialCsv: (data?: { month?: number; year?: number }) =>
+    ipcRenderer.invoke('export-financial-csv', data),
   getPrinters: () => ipcRenderer.invoke('get-printers'),
   getPrinterConfig: () => ipcRenderer.invoke('get-printer-config'),
   savePrinterConfig: (printerName: string) =>
