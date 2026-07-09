@@ -254,6 +254,75 @@ export async function printExitTicket(
   await runPrint(() => PosPrinter.print(data, getBaseOptions() as any))
 }
 
+export interface ShiftClosureReceiptData {
+  shiftLabel: string
+  periodLabel: string
+  totalAvulsos: number
+  countAvulsos: number
+  totalRenovacoes: number
+  countRenovacoes: number
+  byMethod: { method: string; total: number }[]
+  cashExpected: number | null
+  cashCounted: number | null
+  cashDifference: number | null
+  operatorName: string | null
+  closedAtLabel: string
+}
+
+/** Comprovante do fechamento de turno (12h) para conferência com a maquininha. */
+export async function printShiftClosureReceipt(data: ShiftClosureReceiptData): Promise<void> {
+  const money = (v: number): string => `R$ ${v.toFixed(2).replace('.', ',')}`
+  const line = (value: string, extra: Record<string, string> = {}): Record<string, unknown> => ({
+    type: 'text',
+    value,
+    style: { marginTop: '2px', fontSize: '11px', ...extra, ...safeTextStyle }
+  })
+
+  const items: any[] = [
+    ...getHeaderItems('KF ESTACIONAMENTO'),
+    {
+      type: 'text',
+      value: 'FECHAMENTO DE TURNO',
+      style: { textAlign: 'center', marginTop: '8px', fontSize: '12px', fontWeight: '700', ...safeTextStyle }
+    },
+    line(data.shiftLabel, { marginTop: '8px' }),
+    line(`Período: ${data.periodLabel}`),
+    line(`Fechado em: ${data.closedAtLabel}`),
+    line(`Operador: ${data.operatorName || '-'}`),
+    line('------------------------------', { marginTop: '6px' }),
+    line(`Avulsos (${data.countAvulsos}): ${money(data.totalAvulsos)}`),
+    line(`Renovações (${data.countRenovacoes}): ${money(data.totalRenovacoes)}`),
+    line(`TOTAL DO TURNO: ${money(data.totalAvulsos + data.totalRenovacoes)}`, { fontWeight: '700' }),
+    line('------------------------------', { marginTop: '6px' }),
+    line('Por forma de pagamento:')
+  ]
+  for (const m of data.byMethod) {
+    items.push(line(`  ${m.method}: ${money(m.total)}`))
+  }
+  items.push(line('------------------------------', { marginTop: '6px' }))
+  if (data.cashCounted != null) {
+    items.push(line(`Dinheiro esperado: ${money(data.cashExpected ?? 0)}`))
+    items.push(line(`Dinheiro contado: ${money(data.cashCounted)}`))
+    const diff = data.cashDifference ?? 0
+    const diffLabel = diff === 0 ? 'sem diferença' : diff > 0 ? 'sobra' : 'falta'
+    items.push(line(`Diferença: ${money(Math.abs(diff))} (${diffLabel})`, { fontWeight: '700' }))
+  } else {
+    items.push(line('Fechado sem conferência de dinheiro.'))
+  }
+  items.push({
+    type: 'text',
+    value: '_________________________________',
+    style: { marginTop: '16px', textAlign: 'center', fontSize: '10px', ...safeTextStyle }
+  })
+  items.push({
+    type: 'text',
+    value: 'Assinatura do operador',
+    style: { marginTop: '2px', textAlign: 'center', fontSize: '10px', ...safeTextStyle }
+  })
+
+  await runPrint(() => PosPrinter.print(items, getBaseOptions() as any))
+}
+
 export interface SubscriptionReceiptData {
   clientData: { name: string; cpf: string; phone: string }
   vehicleList: string[]

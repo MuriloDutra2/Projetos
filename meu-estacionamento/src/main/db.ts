@@ -195,6 +195,32 @@ db.exec(`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_seq ON sync_log(seq)`)
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_node ON sync_log(node_id, seq)`)
 
+// ── Fechamento de caixa por turno de 12h ─────────────────────────────────
+// Registro IMUTÁVEL: sem UPDATE/DELETE; UNIQUE impede fechar o mesmo turno
+// duas vezes. start_iso/end_iso guardam o intervalo REAL coberto — cada
+// fechamento começa onde o anterior terminou (corrente sem buracos), e o
+// fim é o instante do fechamento. Transação lançada depois entra no próximo.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shift_closures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    shift_date TEXT NOT NULL,
+    shift_type TEXT NOT NULL CHECK(shift_type IN ('DIURNO','NOTURNO')),
+    start_iso TEXT NOT NULL,
+    end_iso TEXT NOT NULL,
+    total_avulsos REAL NOT NULL DEFAULT 0,
+    total_renovacoes REAL NOT NULL DEFAULT 0,
+    count_avulsos INTEGER NOT NULL DEFAULT 0,
+    count_renovacoes INTEGER NOT NULL DEFAULT 0,
+    by_method_json TEXT NOT NULL DEFAULT '[]',
+    cash_expected REAL,
+    cash_counted REAL,
+    cash_difference REAL,
+    operator_name TEXT,
+    closed_at TEXT NOT NULL,
+    UNIQUE(shift_date, shift_type)
+  )
+`)
+
 /** Registra uma operação de escrita no sync_log para replicação LAN. */
 function logSync(
   tableName: string,
@@ -308,6 +334,26 @@ const stmts = {
     ORDER BY sp.payment_date DESC
     LIMIT 200
   `),
+  /** Avulsos pagos por forma de pagamento no intervalo [início, fim) ISO UTC. */
+  getAvulsosByMethodForRange: db.prepare(`
+    SELECT COALESCE(payment_method, 'Não informado') as payment_method, COALESCE(SUM(valor), 0) as total
+    FROM tickets
+    WHERE status = 'FINALIZADO' AND valor > 0 AND saida >= ? AND saida < ?
+    GROUP BY COALESCE(payment_method, 'Não informado')
+  `),
+  insertShiftClosure: db.prepare(`
+    INSERT INTO shift_closures (
+      shift_date, shift_type, start_iso, end_iso,
+      total_avulsos, total_renovacoes, count_avulsos, count_renovacoes,
+      by_method_json, cash_expected, cash_counted, cash_difference, operator_name, closed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  getLastShiftClosure: db.prepare(
+    'SELECT * FROM shift_closures ORDER BY end_iso DESC LIMIT 1'
+  ),
+  listShiftClosures: db.prepare(
+    'SELECT * FROM shift_closures ORDER BY end_iso DESC LIMIT ?'
+  ),
   /** Pagamentos de renovação no intervalo [início, fim) ISO UTC — sem LIMIT (totais e CSV). */
   getPaymentsForRange: db.prepare(`
     SELECT sp.*, COALESCE(c.name, sp.payer_display_name, 'Cliente removido') as client_name
@@ -446,6 +492,24 @@ const stmts = {
 }
 
 const normalizeCpfDigits = (cpf: string) => cpf.replace(/\D/g, '')
+
+export interface ShiftClosureRow {
+  id: number
+  shift_date: string
+  shift_type: string
+  start_iso: string
+  end_iso: string
+  total_avulsos: number
+  total_renovacoes: number
+  count_avulsos: number
+  count_renovacoes: number
+  by_method_json: string
+  cash_expected: number | null
+  cash_counted: number | null
+  cash_difference: number | null
+  operator_name: string | null
+  closed_at: string
+}
 
 export { effectiveBillingDayInMonth } from './garageDates'
 
@@ -946,6 +1010,111 @@ export const dbOperations = {
   getFinanceMonthData: (month: number, year: number) => {
     const { start, end } = localMonthToIsoRange(`${year}-${String(month).padStart(2, '0')}`)
     return dbOperations.getFinanceDataForRange(start, end)
+  },
+
+  // ── Fechamento de caixa por turno ────────────────────────────────────────
+
+  /**
+   * Dados ao vivo do caixa no intervalo [início, fim) ISO UTC: totais,
+   * quebra por forma (avulsos + renovações somados) e transações.
+   */
+  getShiftLiveData: (start: string, end: string) => {
+    const base = dbOperations.getFinanceDataForRange(start, end)
+    const avulsosByMethod = stmts.getAvulsosByMethodForRange.all(start, end) as {
+      payment_method: string
+      total: number
+    }[]
+    const merged = new Map<string, { method: string; avulsos: number; renovacoes: number; total: number }>()
+    for (const r of avulsosByMethod) {
+      merged.set(r.payment_method, { method: r.payment_method, avulsos: r.total, renovacoes: 0, total: r.total })
+    }
+    for (const r of base.byMethod) {
+      const cur = merged.get(r.payment_method) ?? { method: r.payment_method, avulsos: 0, renovacoes: 0, total: 0 }
+      cur.renovacoes += r.total
+      cur.total += r.total
+      merged.set(r.payment_method, cur)
+    }
+    const byMethod = [...merged.values()].sort((a, b) => b.total - a.total)
+    const cashExpected = merged.get('Dinheiro')?.total ?? 0
+    return {
+      totalAvulsos: base.totalAvulsos,
+      countAvulsos: base.countAvulsos,
+      totalRenovacoes: base.totalRenovacoes,
+      countRenovacoes: base.countRenovacoes,
+      total: base.totalAvulsos + base.totalRenovacoes,
+      byMethod,
+      cashExpected,
+      tickets: base.tickets,
+      payments: base.payments
+    }
+  },
+
+  getLastShiftClosure: () => stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined,
+
+  listShiftClosures: (limit = 20) => stmts.listShiftClosures.all(limit) as ShiftClosureRow[],
+
+  /**
+   * Fecha o turno atual: INSERT imutável cobrindo [fim do fechamento anterior
+   * (ou início natural do turno), agora]. UNIQUE(shift_date, shift_type)
+   * bloqueia fechar o mesmo turno duas vezes.
+   */
+  closeShift: (shift: { shiftDate: string; shiftType: string; startIso: string }, data: {
+    cashCounted?: number | null
+    operatorName?: string
+  }) => {
+    const last = stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined
+    if (last && last.shift_date === shift.shiftDate && last.shift_type === shift.shiftType) {
+      return { success: false as const, error: 'Este turno já foi fechado.' }
+    }
+    const windowStart = last ? last.end_iso : shift.startIso
+    const closedAt = new Date().toISOString()
+    const live = dbOperations.getShiftLiveData(windowStart, closedAt)
+    const cashCounted = data.cashCounted ?? null
+    const cashDifference = cashCounted != null ? cashCounted - live.cashExpected : null
+    try {
+      const result = stmts.insertShiftClosure.run(
+        shift.shiftDate,
+        shift.shiftType,
+        windowStart,
+        closedAt,
+        live.totalAvulsos,
+        live.totalRenovacoes,
+        live.countAvulsos,
+        live.countRenovacoes,
+        JSON.stringify(live.byMethod),
+        live.cashExpected,
+        cashCounted,
+        cashDifference,
+        data.operatorName?.trim() || null,
+        closedAt
+      )
+      const id = result.lastInsertRowid as number
+      logSync('shift_closures', id, 'INSERT', {
+        id,
+        shift_date: shift.shiftDate,
+        shift_type: shift.shiftType,
+        start_iso: windowStart,
+        end_iso: closedAt,
+        total_avulsos: live.totalAvulsos,
+        total_renovacoes: live.totalRenovacoes,
+        count_avulsos: live.countAvulsos,
+        count_renovacoes: live.countRenovacoes,
+        by_method_json: JSON.stringify(live.byMethod),
+        cash_expected: live.cashExpected,
+        cash_counted: cashCounted,
+        cash_difference: cashDifference,
+        operator_name: data.operatorName?.trim() || null,
+        closed_at: closedAt
+      })
+      const closure = stmts.getLastShiftClosure.get() as ShiftClosureRow
+      return { success: true as const, closure }
+    } catch (e) {
+      const err = e as { code?: string }
+      if (err?.code?.startsWith('SQLITE_CONSTRAINT')) {
+        return { success: false as const, error: 'Este turno já foi fechado.' }
+      }
+      throw e
+    }
   },
 
   getClientStatement: (clientId: number) => {

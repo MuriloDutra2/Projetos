@@ -36,6 +36,15 @@
 - [ ] **Saída após 21h:** registrar uma saída depois das 21h e conferir que cai no dia certo no Relatório, Financeiro e Histórico.
 - [ ] **Total do mês:** conferir que o total de avulsos do Financeiro bate com a soma da tabela e com o CSV exportado.
 
+### 3c. Fechamento de caixa por turno (atualização jul/2026)
+- [ ] **Aba Caixa:** abrir a aba, conferir o badge do turno atual (diurno 07h–19h / noturno 19h–07h) e a contagem regressiva.
+- [ ] **Totais ao vivo:** fazer uma saída paga e uma renovação; conferir que os cards e a quebra por forma atualizam (recarrega a cada 30s).
+- [ ] **Conferência:** digitar o dinheiro contado e conferir sobra/falta contra o "dinheiro esperado".
+- [ ] **Fechar turno:** confirmar o fechamento; o comprovante deve imprimir e o turno aparecer no histórico.
+- [ ] **Fechamento duplicado:** tentar fechar de novo o mesmo turno — deve ser bloqueado ("já foi fechado").
+- [ ] **Transação após fechar:** registrar uma saída depois do fechamento e conferir que ela entra no turno seguinte (card "Desde HH:mm").
+- [ ] **Turno noturno:** fechar um turno noturno de madrugada e conferir que ele cobre desde as 19h de ontem (cruza a meia-noite inteiro).
+
 ### 4. Dados persistentes
 - [ ] Fechar o app e abrir de novo: conferir se os tickets e assinantes continuam lá.
 - [ ] (Opcional) Verificar em `%APPDATA%\KF Estacionamento\` se existem `parking.db` e `config.json`.

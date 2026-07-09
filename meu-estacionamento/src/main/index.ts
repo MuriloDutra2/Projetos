@@ -26,7 +26,8 @@ import icon from '../../resources/icon.png?asset'
 import { dbOperations, translateDbError } from './db'
 import { localDateStr } from './clientStatus'
 import { calcularValor, splitStayIntoLocalDaySegments } from './calculations'
-import { printEntryTicket, printExitTicket, printSubscriptionReceipt } from './printer'
+import { printEntryTicket, printExitTicket, printSubscriptionReceipt, printShiftClosureReceipt, type ShiftClosureReceiptData } from './printer'
+import { currentShift, shiftLabel } from './shifts'
 import { getConfig, saveConfig } from './config'
 import { startSyncServer, stopSyncServer, getSyncServerInfo } from './syncServer'
 
@@ -409,6 +410,68 @@ app.whenReady().then(() => {
         tickets: [],
         payments: []
       }
+    }
+  })
+
+  // ── Fechamento de caixa por turno ──────────────────────────────────────
+
+  ipcMain.handle('get-shift-overview', () => {
+    try {
+      const cfg = getConfig()
+      const dayStart = cfg.shiftDayStartHour ?? 7
+      const nightStart = cfg.shiftNightStartHour ?? 19
+      const now = new Date()
+      const shift = currentShift(now, dayStart, nightStart)
+      const last = dbOperations.getLastShiftClosure()
+      const alreadyClosed =
+        !!last && last.shift_date === shift.shiftDate && last.shift_type === shift.shiftType
+      // Janela ao vivo: começa onde o último fechamento terminou (corrente sem
+      // buracos); sem fechamento anterior, começa no início natural do turno.
+      const windowStartIso = last ? last.end_iso : shift.startIso
+      const live = alreadyClosed
+        ? null
+        : dbOperations.getShiftLiveData(windowStartIso, now.toISOString())
+      return {
+        shift: { ...shift, label: shiftLabel(shift.shiftType, dayStart, nightStart) },
+        windowStartIso,
+        alreadyClosed,
+        live,
+        closures: dbOperations.listShiftClosures(20)
+      }
+    } catch (error) {
+      console.error('Erro ao buscar visão do turno:', error)
+      return null
+    }
+  })
+
+  ipcMain.handle(
+    'close-shift',
+    (_event, data: { cashCounted?: number | null; operatorName?: string }) => {
+      try {
+        const cfg = getConfig()
+        const shift = currentShift(
+          new Date(),
+          cfg.shiftDayStartHour ?? 7,
+          cfg.shiftNightStartHour ?? 19
+        )
+        return dbOperations.closeShift(shift, {
+          cashCounted: data?.cashCounted ?? null,
+          operatorName: data?.operatorName
+        })
+      } catch (error) {
+        console.error('Erro ao fechar turno:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle('print-shift-closure', async (_event, data: ShiftClosureReceiptData) => {
+    try {
+      await printShiftClosureReceipt(data)
+      return { success: true }
+    } catch (error) {
+      console.error('Erro ao imprimir fechamento:', error)
+      return { success: false, error: String(error) }
     }
   })
 

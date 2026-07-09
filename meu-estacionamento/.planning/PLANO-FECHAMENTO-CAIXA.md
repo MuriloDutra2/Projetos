@@ -240,7 +240,13 @@ sai ou vira "consolidado do dia" = soma dos dois turnos).
 | 4 | Totais sem LIMIT | `fix(finance): totais mensais via SQL sem limite` ✅ | Financeiro = CSV = soma manual |
 | 5 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` ✅ | UAT renovação 3 meses |
 | 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` ✅ | Checklist pátio completo |
-| 7 | Turnos | `feat(caixa): fechamento por turno de 12h` | UAT fechamento diurno + noturno |
+| 7 | Turnos | `feat(caixa): fechamento por turno de 12h` ✅ | UAT fechamento diurno + noturno |
+
+Detalhe de implementação da Fase 7 (corrente de fechamentos): o intervalo real coberto por
+cada fechamento vai do **fim do fechamento anterior** (ou do início natural do turno, no
+primeiro uso) até o **instante do fechamento**. Fechou às 18:50 e um carro saiu às 18:55?
+Essa saída entra no fechamento do turno seguinte — nenhuma transação fica órfã e nenhum
+registro fechado muda. `UNIQUE(shift_date, shift_type)` impede fechar o mesmo turno duas vezes.
 
 Nota de priorização (09/07): o vídeo do funcionário subiu a urgência de **1c** (está gerando
 quebra de caixa e cobrança indevida hoje) e confirmou **7** como o pedido da operação.

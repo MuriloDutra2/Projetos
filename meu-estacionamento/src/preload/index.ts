@@ -109,6 +109,12 @@ const api = {
   deleteFamilyMember: (memberId: number) => ipcRenderer.invoke('delete-family-member', memberId),
   deleteFamilyGroup: (groupId: number) => ipcRenderer.invoke('delete-family-group', groupId),
 
+  // ── Fechamento de caixa por turno ──
+  getShiftOverview: () => ipcRenderer.invoke('get-shift-overview'),
+  closeShift: (data: { cashCounted?: number | null; operatorName?: string }) =>
+    ipcRenderer.invoke('close-shift', data),
+  printShiftClosure: (data: unknown) => ipcRenderer.invoke('print-shift-closure', data),
+
   // ── Sync LAN ──
   syncStartServer: () => ipcRenderer.invoke('sync-start-server'),
   syncStopServer: () => ipcRenderer.invoke('sync-stop-server'),
