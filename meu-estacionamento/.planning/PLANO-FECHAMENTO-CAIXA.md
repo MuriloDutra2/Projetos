@@ -67,6 +67,23 @@ das 19h às 7h**, com todo valor de cobrança do plantão de 12h dentro do fecha
 no final para bater com a maquininha. **Confirma as causas nº 1/4 e valida a Fase 6 exatamente
 como desenhada** (turnos 07:00–19:00 / 19:00–07:00).
 
+## Validação de campo 2 — segundo vídeo (09/07/2026, 09:02)
+
+**Situação C — maquininha do dia 8 ≠ sistema do dia 8, lista com dia 7 misturado e total
+que muda sozinho.** Relatório da maquininha do dia 8 não bateu com a tela do sistema; a
+lista "do dia 8" mostrava registros de 07/07 19h–21h no final, e o total mudava conforme
+registros novos empurravam os antigos para fora da lista. **Já resolvido** (pendente de
+deploy/UAT): Fase 1 corrigiu o dia local (registros de 07/07 21h não caem mais em 08/07),
+Fase 4 removeu as listas truncadas cujos totais mudavam ao rolar, e a Fase 7 entrega o
+fechamento imutável por turno para bater com a maquininha.
+
+**Situação D — cota de minutos grátis renova à meia-noite (NOVO → Fase 8).** "Se o aluno
+entra 23h, quando dá meia-noite ele não vai ter mais só a meia hora — ele ganha mais 1h30.
+Fica em vermelho, porém não gera cobrança." Confirmado no código: `calcularValor` divide a
+estadia por dia civil e **cada dia ganha cota própria de minutos grátis** — quem entra às
+23:00 fica grátis até 01:30 (2h30), enquanto o card no pátio fica vermelho a partir de
+00:30 (a UI calcula contínuo). Operador vê ALERTA, checkout dá R$ 0, cliente sai sem pagar.
+
 ---
 
 ## Fases
@@ -228,6 +245,38 @@ sai ou vira "consolidado do dia" = soma dos dois turnos).
 
 **Risco ao pátio:** nenhum (tabela nova + leituras novas + uma tela nova).
 
+### Fase 8 — Cota única por estadia (meia-noite não renova) **[requer aprovação da gerência]**
+
+**Problema (Situação D):** a cota de minutos grátis é POR DIA CIVIL dentro da mesma estadia.
+Quem entra às 23:00 com cota de 90 min ganharia nova cota à meia-noite e sai grátis até
+01:30. A UI do pátio marca vermelho aos 90 min contínuos — vermelho sem cobrança confunde
+o operador e o estacionamento perde receita.
+
+**Regra proposta:** uma estadia contínua tem **UMA cota**, igual a
+`max(0, minutosGrátis − uso já registrado no dia da entrada)`. A meia-noite não renova a
+cota da estadia em andamento. O rateio por dia civil continua existindo **apenas para
+registrar o uso** em `daily_free_usage` (anti-fraude de reentrada) — nada muda ali.
+
+**Onde mexe:** somente a agregação da cota dentro de `calcularValor` (`calculations.ts`).
+`isPernoite` (R$ 50 tem precedência), `splitStayIntoLocalDaySegments`, `minutosDaEstadia`
+e o registro de uso diário ficam intocados.
+
+**ATENÇÃO — muda valores cobrados (por isso o gate de aprovação):**
+- Caso do vídeo: entra 23:00, sai 01:30 → hoje R$ 0; com a regra nova R$ 4 (1h excedente).
+- Estadia longa sem pernoite (teste 1.13: 19h→7h) → hoje R$ 36; com a regra nova R$ 44.
+- Pernoite avulso (entrada ≥18h, saída ≤8h do dia seguinte) continua R$ 50 fixo.
+Confirmar os dois exemplos acima com a gerência antes de executar.
+
+**Cuidados (mexe no motor de cobrança — exceção consciente à regra de ouro):**
+- Revisar um a um os 34 testes de `calculations.test.ts`; o 1.13 muda de valor
+  deliberadamente (documentar no próprio teste o porquê).
+- Testes novos: caso do vídeo (23:00→01:30 = R$ 4), 23:00→00:20 dentro da cota (R$ 0),
+  reentrada no dia seguinte após estadia longa (cota do dia 2 já consumida — anti-fraude),
+  precedência do pernoite.
+- UAT: card vermelho no pátio deve coincidir com "vai gerar cobrança" (UI e motor passam
+  a usar a mesma régua contínua).
+- Commit isolado e reversível; rodar a rede de regressão completa do pátio.
+
 ---
 
 ## Ordem, commits e critério de "pronto"
@@ -241,6 +290,8 @@ sai ou vira "consolidado do dia" = soma dos dois turnos).
 | 5 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` ✅ | UAT renovação 3 meses |
 | 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` ✅ | Checklist pátio completo |
 | 7 | Turnos | `feat(caixa): fechamento por turno de 12h` ✅ | UAT fechamento diurno + noturno |
+
+| 8 | Cota única por estadia | `fix(cobranca): meia-noite não renova cota da estadia` | Aprovação da gerência + UAT 23h→01:30 |
 
 Detalhe de implementação da Fase 7 (corrente de fechamentos): o intervalo real coberto por
 cada fechamento vai do **fim do fechamento anterior** (ou do início natural do turno, no
