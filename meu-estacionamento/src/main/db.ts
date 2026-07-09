@@ -365,9 +365,16 @@ const stmts = {
   getTotalAvulsosForRange: db.prepare(
     "SELECT COALESCE(SUM(valor), 0) as total FROM tickets WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?"
   ),
-  /** Contagem e valor de planos vendidos (renovações) no dia local ([início, fim) em ISO UTC). */
+  /**
+   * Contagem e valor de planos vendidos (renovações) no intervalo [início, fim) ISO UTC.
+   * Pagamento de N meses gera N linhas (1 por competência) com o valor mensal em cada:
+   * o valor soma todas (caixa recebeu o total hoje), mas a contagem só considera a
+   * venda (is_advance = 0) para não inflar "planos vendidos".
+   */
   getPlanosVendidosForRange: db.prepare(`
-    SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
+    SELECT
+      COALESCE(SUM(CASE WHEN COALESCE(is_advance, 0) = 0 THEN 1 ELSE 0 END), 0) as count,
+      COALESCE(SUM(amount), 0) as total
     FROM subscription_payments WHERE payment_date >= ? AND payment_date < ?
   `),
   getSavedDailyReport: db.prepare(

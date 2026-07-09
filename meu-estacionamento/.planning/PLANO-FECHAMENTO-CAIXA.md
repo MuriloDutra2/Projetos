@@ -153,6 +153,25 @@ escrita nem cálculo de valor. Commit isolado, reversível sozinho.
 - Modelo de inserção (N linhas por competência) **não muda** — é o que sustenta o controle de competência/devedores.
 - Dados antigos: gerar (uma vez, manual) uma listagem de renovações multi-meses (mesmo cliente + mesmo `payment_date`, >1 linha) para o gerente auditar se houve valor-total digitado como mensal. Não corrigir dado automaticamente.
 
+  Consulta pronta para rodar no `parking.db` de produção (com o gerente, ex.: via DB Browser for SQLite):
+
+  ```sql
+  SELECT COALESCE(c.name, sp.payer_display_name) AS cliente,
+         substr(sp.payment_date, 1, 10)          AS data_pagamento,
+         COUNT(*)                                 AS meses,
+         sp.amount                                AS valor_mensal_gravado,
+         COUNT(*) * sp.amount                     AS total_gravado,
+         GROUP_CONCAT(sp.competency_month)        AS competencias
+  FROM subscription_payments sp
+  LEFT JOIN clients c ON c.id = sp.client_id
+  GROUP BY sp.client_id, sp.payment_date
+  HAVING COUNT(*) > 1
+  ORDER BY sp.payment_date DESC;
+  ```
+
+  Se `total_gravado` for absurdo para o plano (ex.: 3 × R$ 225 para Mensal Carro de R$ 75),
+  o operador digitou o total em vez do valor mensal — o gerente decide o ajuste caso a caso.
+
 **Risco ao pátio:** nenhum. Risco financeiro: semântica de dados antigos — mitigado pela auditoria manual.
 
 ### Fase 4 — Forma de pagamento no avulso (única fase que toca o checkout)
@@ -219,7 +238,7 @@ sai ou vira "consolidado do dia" = soma dos dois turnos).
 | 2 | Fuso operacional (1b) | ✅ junto com 1c (mesmo módulo de helpers) | UAT entrada repetida + badge devedor |
 | 3 | Status vs vencimento (1c) | `fix(mensalistas): em dia se vencimento cobre hoje` ✅ | UAT caso do vídeo (pago ≠ atraso) |
 | 4 | Totais sem LIMIT | `fix(finance): totais mensais via SQL sem limite` ✅ | Financeiro = CSV = soma manual |
-| 5 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` | UAT renovação 3 meses |
+| 5 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` ✅ | UAT renovação 3 meses |
 | 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` | Checklist pátio completo |
 | 7 | Turnos | `feat(caixa): fechamento por turno de 12h` | UAT fechamento diurno + noturno |
 
