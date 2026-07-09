@@ -44,6 +44,28 @@ que é opcional e com fallback — detalhado lá.
 3. **Renovação multi-meses**: N linhas × valor digitado, rótulo ambíguo ("Valor (R$)") — se o operador digita o total, registra N× o valor. Contagem de "planos vendidos" inflada (`is_advance` não é usado nos relatórios).
 4. **Snapshot vs ao vivo**: Relatório sempre recalcula; exclusões posteriores mudam o passado silenciosamente.
 5. **Avulsos sem forma de pagamento**: impossível conferir a gaveta (dinheiro físico) contra o sistema.
+6. **Status financeiro ignora o vencimento** *(confirmado em campo, ver seção abaixo)*: `financialStatus` e `isDebtor` (`db.ts` ~584-599) só verificam `hasPaymentInMonth` com competência do mês-calendário atual — ignoram `expiry_date`. Cliente pago com vencimento futuro pode aparecer "A vencer"/"Em atraso". Como `isDebtor` também alimenta a **entrada do veículo** (`getVehicleSubscription`), o carro do mensalista pago entra como avulso, a saída gera cobrança que não é cobrada → débito fantasma no faturamento → quebra no caixa.
+
+---
+
+## Validação de campo — vídeo do funcionário (09/07/2026)
+
+Vídeo enviado por funcionário do estacionamento (transcrito com whisper), relatando duas situações:
+
+**Situação A — mensalista pago marcado como a vencer/atraso.** Cliente "G.H." pagou
+R$ 60 (comprovantes de maquininha: 50 + 10), lançado no sistema, vencimento exibido 09/08.
+Status na tela: "A vencer", e no dia seguinte marcaria "Em atraso". Procedimento que a equipe
+adota quando marca atraso: registra a placa como avulso → na saída o sistema gera cobrança →
+não cobram (cliente já pagou) → débito fantasma + quebra de caixa. **Confirma a causa nº 6**
+(status ignora `expiry_date`). → tratada na **Fase 1c**.
+
+**Situação B — fechamento mistura dias.** A tela usada para conferência ("Últimas 24h" /
+Histórico) mostra dia 8 e dia 9 juntos ("vai descendo e vai sumindo"); a gerência puxou o
+relatório diário da maquininha, não bateu com o sistema (que incluía a noite anterior) e
+responsabilizou os funcionários. Pedido literal do funcionário: fechamento **das 7h às 19h e
+das 19h às 7h**, com todo valor de cobrança do plantão de 12h dentro do fechamento e um total
+no final para bater com a maquininha. **Confirma as causas nº 1/4 e valida a Fase 6 exatamente
+como desenhada** (turnos 07:00–19:00 / 19:00–07:00).
 
 ---
 
@@ -83,6 +105,37 @@ Trocar as queries de `date(coluna) = date(?)` para intervalo meio-aberto
 - `getPlateWasInToday` (usado na entrada de veículo) e `hasPaymentInMonth` (badge devedor) têm o mesmo bug UTC.
 - Corrigir com o mesmo helper, **em commit separado**, com teste unitário próprio e item novo no `TESTES-ANTES-DO-PENDRIVE.md` (entrada de placa repetida no mesmo dia; mensalista pago dia 1 não pode aparecer "Em atraso").
 - Se qualquer comportamento estranho aparecer no UAT, esta fase reverte sozinha sem afetar a Fase 1.
+
+### Fase 1c — Status financeiro coerente com o vencimento (caso do vídeo) **[prioridade alta]**
+
+**Problema:** `isMensalistaDebtor`, `isGaragemDebtorInternal` e o `financialStatus` de
+`getClients` decidem só por `hasPaymentInMonth(competência do mês-calendário atual)`.
+Ignoram `expiry_date` e a maior competência paga. Cliente pago (vencimento futuro) pode
+aparecer devedor; `isDebtor` chega até a tela de entrada e induz o operador a registrar o
+veículo como avulso.
+
+**Correção (regra única, aplicada nos três pontos):**
+
+```
+emDia = expiry_date >= hoje
+     OU maxCompetenciaPaga >= competenciaAtual
+     OU hasPaymentInMonth(competenciaAtual)          // regra atual, mantida
+```
+
+Só se nenhuma das três valer, aplicar a régua do dia 10 (mensal) / billing day (garagem)
+para decidir "A vencer" / "Vence hoje" / "Em atraso".
+
+**Cuidados (toca a entrada de veículo via `getVehicleSubscription.isDebtor`):**
+- Testes unitários da regra nova com casos: pago adiantado (competência futura), vencimento
+  editado manualmente sem pagamento lançado, cliente realmente devedor, garagem com billing day.
+- Investigar no banco de produção (com o gerente, sem expor PII) o registro do caso real do
+  vídeo para confirmar qual caminho gerou o estado (pagamento com competência futura vs.
+  vencimento editado sem pagamento) — isso decide se também precisamos avisar o operador ao
+  editar vencimento manualmente.
+- UAT: veículo de mensalista pago entra como MENSALISTA (sem cobrança na saída).
+
+**Risco ao pátio:** médio-baixo — muda um critério de status lido na entrada, não muda
+escrita nem cálculo de valor. Commit isolado, reversível sozinho.
 
 ### Fase 2 — Totais mensais corretos (remover LIMITs do cálculo)
 
@@ -162,12 +215,17 @@ sai ou vira "consolidado do dia" = soma dos dois turnos).
 
 | # | Fase | Commit(s) | Gate antes do próximo |
 |---|---|---|---|
-| 1 | Fuso nas agregações | `fix(finance): agregações por intervalo local` | `npm test` verde + UAT saída 22h |
+| 1 | Fuso nas agregações | `fix(finance): agregações por intervalo local` ✅ (573ccbb) | `npm test` verde + UAT saída 22h |
 | 2 | Fuso operacional (1b) | `fix: getPlateWasInToday e devedor por dia local` | UAT entrada repetida + badge devedor |
-| 3 | Totais sem LIMIT | `fix(finance): totais mensais via SQL sem limite` | Financeiro = CSV = soma manual |
-| 4 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` | UAT renovação 3 meses |
-| 5 | Pagamento no avulso | `feat(checkout): forma de pagamento` | Checklist pátio completo |
-| 6 | Turnos | `feat(caixa): fechamento por turno de 12h` | UAT fechamento diurno + noturno |
+| 3 | Status vs vencimento (1c) | `fix(mensalistas): em dia se vencimento cobre hoje` | UAT caso do vídeo (pago ≠ atraso) |
+| 4 | Totais sem LIMIT | `fix(finance): totais mensais via SQL sem limite` | Financeiro = CSV = soma manual |
+| 5 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` | UAT renovação 3 meses |
+| 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` | Checklist pátio completo |
+| 7 | Turnos | `feat(caixa): fechamento por turno de 12h` | UAT fechamento diurno + noturno |
+
+Nota de priorização (09/07): o vídeo do funcionário subiu a urgência de **1c** (está gerando
+quebra de caixa e cobrança indevida hoje) e confirmou **7** como o pedido da operação.
+A ordem técnica acima mantém as correções de base antes da feature nova.
 
 Cada fase é um commit atômico e reversível sozinho. Nenhuma fase depende da posterior.
 
