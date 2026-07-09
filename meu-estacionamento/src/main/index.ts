@@ -24,6 +24,7 @@ configureStableCachePaths()
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { dbOperations, translateDbError } from './db'
+import { localDateStr } from './clientStatus'
 import { calcularValor, splitStayIntoLocalDaySegments } from './calculations'
 import { printEntryTicket, printExitTicket, printSubscriptionReceipt } from './printer'
 import { getConfig, saveConfig } from './config'
@@ -222,7 +223,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('check-plate-was-in-today', (_event, placa: string) => {
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      const today = localDateStr(new Date())
       return dbOperations.getPlateWasInToday(normalizePlate(placa), today)
     } catch (error) {
       console.error('Erro ao verificar placa no dia:', error)

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, copyFileSync, readdirSync, unlinkSync, readFileS
 import { randomUUID } from 'crypto'
 import { effectiveBillingDayInMonth } from './garageDates'
 import { localDayToIsoRange, localMonthToIsoRange } from './dateRanges'
+import { isCoveredNow, financialStatusFor, localDateStr } from './clientStatus'
 
 const dbPath =
   process.env.NODE_ENV === 'development'
@@ -249,11 +250,11 @@ const stmts = {
   getExcludedTickets: db.prepare(
     "SELECT id, placa, tipo, entrada, saida FROM tickets WHERE status = 'EXCLUIDO' ORDER BY saida DESC"
   ),
-  /** Verifica se a placa teve algum ticket hoje (entrada ou saída no dia) */
+  /** Verifica se a placa teve algum ticket no dia local (entrada ou saída em [início, fim) ISO UTC) */
   getPlateWasInToday: db.prepare(`
     SELECT 1 FROM tickets
     WHERE UPPER(REPLACE(placa, '-', '')) = UPPER(REPLACE(?, '-', ''))
-      AND (date(entrada) = date(?) OR (saida IS NOT NULL AND date(saida) = date(?)))
+      AND ((entrada >= ? AND entrada < ?) OR (saida IS NOT NULL AND saida >= ? AND saida < ?))
     LIMIT 1
   `),
 
@@ -315,13 +316,14 @@ const stmts = {
     GROUP BY COALESCE(payment_method, 'Não informado')
     ORDER BY total DESC
   `),
+  /** Pagamento no mês: competência igual à chave, ou (linhas antigas sem competência) payment_date dentro do mês local [início, fim) ISO UTC. */
   hasPaymentInMonth: db.prepare(`
     SELECT 1
     FROM subscription_payments
     WHERE client_id = ?
       AND (
         competency_month = ?
-        OR (competency_month IS NULL AND strftime('%Y-%m', payment_date) = ?)
+        OR (competency_month IS NULL AND payment_date >= ? AND payment_date < ?)
       )
     LIMIT 1
   `),
@@ -437,6 +439,28 @@ function competencyKeyFromDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+/**
+ * Cliente coberto hoje: vencimento futuro, competência máxima paga cobre o mês
+ * atual, ou pagamento lançado no mês atual. Se `expiryDate` não for passado,
+ * busca o cadastro. Regra pura em clientStatus.ts (caso do vídeo 09/07/2026).
+ */
+function isClientCoveredNow(clientId: number, expiryDate: string | null | undefined, now: Date): boolean {
+  const exp =
+    expiryDate !== undefined
+      ? expiryDate
+      : (stmts.getClientById.get(clientId) as { expiry_date?: string } | undefined)?.expiry_date
+  const monthKey = competencyKeyFromDate(now)
+  const maxCompRow = stmts.getMaxCompetencyByClientId.get(clientId) as { max_competency?: string } | undefined
+  const { start, end } = localMonthToIsoRange(monthKey)
+  const paidCurrentMonth = !!stmts.hasPaymentInMonth.get(clientId, monthKey, start, end)
+  return isCoveredNow({
+    expiryDate: exp ?? null,
+    maxPaidCompetency: maxCompRow?.max_competency ?? null,
+    paidCurrentMonth,
+    now
+  })
+}
+
 function isGaragemDebtorInternal(
   clientId: number,
   billingDay: number | null | undefined,
@@ -446,9 +470,7 @@ function isGaragemDebtorInternal(
   const now = nowDate ?? new Date()
   const due = effectiveBillingDayInMonth(now.getFullYear(), now.getMonth(), billingDay)
   if (now.getDate() <= due) return false
-  const monthKey = competencyKeyFromDate(now)
-  const payment = stmts.hasPaymentInMonth.get(clientId, monthKey, monthKey)
-  return !payment
+  return !isClientCoveredNow(clientId, undefined, now)
 }
 
 /** Tipo de ticket ativo conforme o plano do cliente. */
@@ -487,11 +509,8 @@ export const dbOperations = {
 
   isMensalistaDebtor: (clientId: number, nowDate?: Date) => {
     const now = nowDate ?? new Date()
-    const day = now.getDate()
-    if (day <= 10) return false
-    const monthKey = dbOperations.getCurrentCompetencyMonth(now)
-    const payment = stmts.hasPaymentInMonth.get(clientId, monthKey, monthKey)
-    return !payment
+    if (now.getDate() <= 10) return false
+    return !isClientCoveredNow(clientId, undefined, now)
   },
 
   hasActiveTicket: (placa: string) => {
@@ -533,7 +552,8 @@ export const dbOperations = {
   getPlateWasInToday: (placa: string, dateStr: string) => {
     const raw = placa.replace(/[^A-Z0-9]/gi, '').toUpperCase()
     if (!raw || raw.length < 7) return false
-    const row = stmts.getPlateWasInToday.get(raw, dateStr, dateStr)
+    const { start, end } = localDayToIsoRange(dateStr)
+    const row = stmts.getPlateWasInToday.get(raw, start, end, start, end)
     return !!row
   },
 
@@ -574,30 +594,23 @@ export const dbOperations = {
   getClients: () => {
     const rows = stmts.getClientsWithVehicles.all() as any[]
     const today = new Date()
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const todayStr = localDateStr(today)
     const expiryDateOnly = (s: string) => (s || '').slice(0, 10)
     return rows.map((r) => {
       const exp = expiryDateOnly(r.expiry_date)
       const isExpired = exp < todayStr
       const isMensalista = typeof r.plan_type === 'string' && r.plan_type.startsWith('MENSAL')
       const isGaragemPlan = r.plan_type === 'GARAGEM'
-      let isDebtor = false
-      if (isMensalista) isDebtor = dbOperations.isMensalistaDebtor(r.id, today)
-      else if (isGaragemPlan) isDebtor = isGaragemDebtorInternal(r.id, r.garage_billing_day, today)
       const latestPayment = stmts.getLatestPaymentByClientId.get(r.id) as any
-      const currentCompetency = dbOperations.getCurrentCompetencyMonth(today)
-      const paidCurrentCompetency = !!stmts.hasPaymentInMonth.get(r.id, currentCompetency, currentCompetency)
+      const covered = isClientCoveredNow(r.id, r.expiry_date, today)
       let financialStatus = 'Em dia'
       if (isMensalista) {
-        if (today.getDate() > 10 && !paidCurrentCompetency) financialStatus = 'Em atraso'
-        else if (today.getDate() === 10 && !paidCurrentCompetency) financialStatus = 'Vence hoje'
-        else if (today.getDate() < 10 && !paidCurrentCompetency) financialStatus = 'A vencer'
+        financialStatus = financialStatusFor(covered, 10, today)
       } else if (isGaragemPlan && r.garage_billing_day != null) {
         const due = effectiveBillingDayInMonth(today.getFullYear(), today.getMonth(), r.garage_billing_day)
-        if (today.getDate() > due && !paidCurrentCompetency) financialStatus = 'Em atraso'
-        else if (today.getDate() === due && !paidCurrentCompetency) financialStatus = 'Vence hoje'
-        else if (today.getDate() < due && !paidCurrentCompetency) financialStatus = 'A vencer'
+        financialStatus = financialStatusFor(covered, due, today)
       }
+      const isDebtor = financialStatus === 'Em atraso'
       const garageBillingLabel =
         isGaragemPlan && r.garage_billing_day != null && r.garage_billing_month != null
           ? `${String(r.garage_billing_day).padStart(2, '0')}/${String(r.garage_billing_month).padStart(2, '0')}`
