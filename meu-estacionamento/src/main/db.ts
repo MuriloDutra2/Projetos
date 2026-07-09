@@ -4,6 +4,7 @@ import { app } from 'electron'
 import { existsSync, mkdirSync, copyFileSync, readdirSync, unlinkSync, readFileSync, writeFileSync } from 'fs'
 import { randomUUID } from 'crypto'
 import { effectiveBillingDayInMonth } from './garageDates'
+import { localDayToIsoRange, localMonthToIsoRange } from './dateRanges'
 
 const dbPath =
   process.env.NODE_ENV === 'development'
@@ -213,11 +214,11 @@ const stmts = {
   getHistory: db.prepare(
     "SELECT id, placa, tipo, entrada, saida, valor FROM tickets WHERE status = 'FINALIZADO' ORDER BY saida DESC LIMIT 50"
   ),
-  /** Todos os veículos finalizados no dia (saída entre 00:00 e 23:59 do dia). dateStr = YYYY-MM-DD */
+  /** Todos os veículos finalizados no dia local (saída em [início, fim) do dia em ISO UTC). */
   getHistoryForDay: db.prepare(`
     SELECT id, placa, tipo, entrada, saida, valor
     FROM tickets
-    WHERE status = 'FINALIZADO' AND date(saida) = date(?)
+    WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?
     ORDER BY saida DESC
   `),
   /** Veículos com saída nas últimas 24 horas (saida >= sinceIso). */
@@ -310,7 +311,7 @@ const stmts = {
   getFinancialHistoryByMethod: db.prepare(`
     SELECT COALESCE(payment_method, 'Não informado') as payment_method, COALESCE(SUM(amount), 0) as total
     FROM subscription_payments
-    WHERE date(payment_date) >= date(?) AND date(payment_date) <= date(?)
+    WHERE payment_date >= ? AND payment_date < ?
     GROUP BY COALESCE(payment_method, 'Não informado')
     ORDER BY total DESC
   `),
@@ -353,14 +354,14 @@ const stmts = {
     SET tipo = ?
     WHERE status = 'ATIVO' AND placa = ?
   `),
-  /** Total avulsos (valor) no dia. dateStr = YYYY-MM-DD */
+  /** Total avulsos (valor) no dia local (saída em [início, fim) em ISO UTC). */
   getTotalAvulsosForDay: db.prepare(
-    "SELECT COALESCE(SUM(valor), 0) as total FROM tickets WHERE status = 'FINALIZADO' AND date(saida) = date(?)"
+    "SELECT COALESCE(SUM(valor), 0) as total FROM tickets WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?"
   ),
-  /** Contagem e valor de planos vendidos (renovações) no dia */
+  /** Contagem e valor de planos vendidos (renovações) no dia local ([início, fim) em ISO UTC). */
   getPlanosVendidosForDay: db.prepare(`
     SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-    FROM subscription_payments WHERE date(payment_date) = date(?)
+    FROM subscription_payments WHERE payment_date >= ? AND payment_date < ?
   `),
   getSavedDailyReport: db.prepare(
     'SELECT * FROM daily_reports WHERE report_date = date(?) LIMIT 1'
@@ -688,7 +689,10 @@ export const dbOperations = {
     }
   },
 
-  getHistoryForDay: (dateStr: string) => stmts.getHistoryForDay.all(dateStr),
+  getHistoryForDay: (dateStr: string) => {
+    const { start, end } = localDayToIsoRange(dateStr)
+    return stmts.getHistoryForDay.all(start, end)
+  },
 
   getHistoryLast24h: () => {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
@@ -696,8 +700,9 @@ export const dbOperations = {
   },
 
   getDailyReport: (dateStr: string) => {
-    const avulsosRow = stmts.getTotalAvulsosForDay.get(dateStr) as { total: number } | undefined
-    const planosRow = stmts.getPlanosVendidosForDay.get(dateStr) as { count: number; total: number } | undefined
+    const { start, end } = localDayToIsoRange(dateStr)
+    const avulsosRow = stmts.getTotalAvulsosForDay.get(start, end) as { total: number } | undefined
+    const planosRow = stmts.getPlanosVendidosForDay.get(start, end) as { count: number; total: number } | undefined
     const saved = stmts.getSavedDailyReport.get(dateStr) as {
       report_date: string
       total_avulsos: number
@@ -872,9 +877,7 @@ export const dbOperations = {
   },
 
   getFinancialSummaryByMethod: (month: number, year: number) => {
-    const start = `${year}-${String(month).padStart(2, '0')}-01`
-    const endDate = new Date(year, month, 0)
-    const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`
+    const { start, end } = localMonthToIsoRange(`${year}-${String(month).padStart(2, '0')}`)
     return stmts.getFinancialHistoryByMethod.all(start, end)
   },
 
