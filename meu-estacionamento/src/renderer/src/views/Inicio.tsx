@@ -101,11 +101,11 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
     setModalOpen(true)
   }
 
-  const handleCheckoutConfirm = async () => {
+  const handleCheckoutConfirm = async (paymentMethod?: string) => {
     if (!checkoutTicket) return
     setCheckoutLoading(true)
     try {
-      const result = await checkoutTicketService({ id: checkoutTicket.id })
+      const result = await checkoutTicketService({ id: checkoutTicket.id, paymentMethod })
       if (result.success) {
         const valorCobrado = result.valor ?? checkoutValor
         if (valorCobrado > 0 && checkoutTicket.tipo !== 'GARAGEM') {

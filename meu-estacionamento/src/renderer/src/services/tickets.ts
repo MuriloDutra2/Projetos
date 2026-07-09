@@ -20,6 +20,7 @@ export async function createTicket(data: {
 
 export async function checkoutTicket(data: {
   id: number
+  paymentMethod?: string
 }): Promise<{ success: boolean; valor?: number; error?: string }> {
   return window.api.checkoutTicket(data)
 }

@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { differenceInMinutes } from 'date-fns'
+import { clsx } from 'clsx'
+
+const FORMAS_PAGAMENTO = ['Dinheiro', 'Pix', 'Cartão'] as const
 
 interface ModalCheckoutProps {
   open: boolean
   onClose: () => void
-  onConfirm: () => void
+  onConfirm: (paymentMethod?: string) => void
   onExclude?: () => void
   ticketId?: number
   placa: string
@@ -37,6 +40,11 @@ export default function ModalCheckout({
   const [excludePassword, setExcludePassword] = useState('')
   const [excludeError, setExcludeError] = useState('')
   const [excludeLoading, setExcludeLoading] = useState(false)
+  const [paymentMethod, setPaymentMethod] = useState<string>('Dinheiro')
+
+  useEffect(() => {
+    if (open) setPaymentMethod('Dinheiro')
+  }, [open])
 
   if (!open) return null
 
@@ -95,6 +103,29 @@ export default function ModalCheckout({
               R$ {valorFormatado}
             </p>
           </div>
+
+          {valor > 0 && (
+            <div>
+              <p className="text-sm text-gray-400 mb-2">Forma de pagamento</p>
+              <div className="flex gap-2">
+                {FORMAS_PAGAMENTO.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setPaymentMethod(m)}
+                    className={clsx(
+                      'flex-1 py-2 px-3 rounded-lg font-medium transition-colors',
+                      paymentMethod === m
+                        ? 'bg-green-600 text-white'
+                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {showExcludeForm && ticketId != null && onExclude ? (
@@ -139,7 +170,7 @@ export default function ModalCheckout({
           </button>
           <button
             type="button"
-            onClick={onConfirm}
+            onClick={() => onConfirm(valor > 0 ? paymentMethod : undefined)}
             disabled={loading}
             className="flex-1 py-3 px-4 bg-green-600 hover:bg-green-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
           >

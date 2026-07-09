@@ -32,7 +32,8 @@ const api = {
   }) => ipcRenderer.invoke('export-daily-report-pdf', data),
   createTicket: (data: { placa: string; tipo: string; cpf?: string }) =>
     ipcRenderer.invoke('create-ticket', data),
-  checkoutTicket: (data: { id: number }) => ipcRenderer.invoke('checkout-ticket', data),
+  checkoutTicket: (data: { id: number; paymentMethod?: string }) =>
+    ipcRenderer.invoke('checkout-ticket', data),
   calculateValue: (data: {
     entrada: string
     placa?: string

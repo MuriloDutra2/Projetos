@@ -31,7 +31,7 @@ export default function Financeiro(): React.JSX.Element {
       ...monthData.tickets.map((h) => ({
         date: h.saida,
         type: 'avulso' as const,
-        description: `Ticket ${h.placa}`,
+        description: `Ticket ${h.placa}${h.payment_method ? ` (${h.payment_method})` : ''}`,
         value: h.valor ?? 0
       })),
       ...monthData.payments.map((p) => ({

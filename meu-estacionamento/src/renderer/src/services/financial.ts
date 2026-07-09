@@ -4,7 +4,15 @@ export interface FinanceMonthData {
   totalRenovacoes: number
   countRenovacoes: number
   byMethod: { payment_method: string; total: number }[]
-  tickets: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number | null }[]
+  tickets: {
+    id: number
+    placa: string
+    tipo: string
+    entrada: string
+    saida: string
+    valor: number | null
+    payment_method: string | null
+  }[]
   payments: any[]
 }
 

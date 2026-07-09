@@ -165,6 +165,8 @@ try {
 }
 
 ensureColumn('tickets', 'cpf', 'cpf TEXT')
+// Forma de pagamento do avulso (Dinheiro/Pix/Cartão); NULL em saída gratuita ou registros antigos.
+ensureColumn('tickets', 'payment_method', 'payment_method TEXT')
 
 // ── Sync LAN: identificador único deste nó ──────────────────────────────
 const nodeIdPath = join(dirname(dbPath), 'node-id.txt')
@@ -217,7 +219,7 @@ const stmts = {
   ),
   /** Todos os veículos finalizados no dia local (saída em [início, fim) do dia em ISO UTC). */
   getFinishedTicketsForRange: db.prepare(`
-    SELECT id, placa, tipo, entrada, saida, valor
+    SELECT id, placa, tipo, entrada, saida, valor, payment_method
     FROM tickets
     WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?
     ORDER BY saida DESC
@@ -236,7 +238,7 @@ const stmts = {
     'INSERT INTO tickets (placa, tipo, entrada) VALUES (?, ?, ?)'
   ),
   checkoutTicket: db.prepare(
-    'UPDATE tickets SET status = ?, saida = ?, valor = ? WHERE id = ?'
+    'UPDATE tickets SET status = ?, saida = ?, valor = ?, payment_method = ? WHERE id = ?'
   ),
   excludeTicket: db.prepare(
     "UPDATE tickets SET status = 'EXCLUIDO', saida = ?, valor = 0 WHERE id = ?"
@@ -540,9 +542,11 @@ export const dbOperations = {
     logSync('tickets', id, 'INSERT', { id, placa, tipo, entrada, cpf: cpfNorm, status: 'ATIVO' })
     return id
   },
-  checkoutTicket: (id: number, valor: number, saida: string) => {
-    stmts.checkoutTicket.run('FINALIZADO', saida, valor, id)
-    logSync('tickets', id, 'UPDATE', { id, status: 'FINALIZADO', saida, valor })
+  checkoutTicket: (id: number, valor: number, saida: string, paymentMethod?: string) => {
+    // Sem forma informada: 'Não informado' quando houve cobrança; NULL em saída gratuita.
+    const method = paymentMethod ?? (valor > 0 ? 'Não informado' : null)
+    stmts.checkoutTicket.run('FINALIZADO', saida, valor, method, id)
+    logSync('tickets', id, 'UPDATE', { id, status: 'FINALIZADO', saida, valor, payment_method: method })
   },
   excludeTicket: (id: number) => {
     const saida = new Date().toISOString()
@@ -920,6 +924,7 @@ export const dbOperations = {
       entrada: string
       saida: string
       valor: number | null
+      payment_method: string | null
     }[]
     const payments = stmts.getPaymentsForRange.all(start, end) as any[]
     const byMethod = stmts.getFinancialHistoryByMethod.all(start, end) as {

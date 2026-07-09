@@ -239,7 +239,7 @@ sai ou vira "consolidado do dia" = soma dos dois turnos).
 | 3 | Status vs vencimento (1c) | `fix(mensalistas): em dia se vencimento cobre hoje` ✅ | UAT caso do vídeo (pago ≠ atraso) |
 | 4 | Totais sem LIMIT | `fix(finance): totais mensais via SQL sem limite` ✅ | Financeiro = CSV = soma manual |
 | 5 | Renovação clara | `fix(renovar): valor por mês explícito + contagem por venda` ✅ | UAT renovação 3 meses |
-| 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` | Checklist pátio completo |
+| 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` ✅ | Checklist pátio completo |
 | 7 | Turnos | `feat(caixa): fechamento por turno de 12h` | UAT fechamento diurno + noturno |
 
 Nota de priorização (09/07): o vídeo do funcionário subiu a urgência de **1c** (está gerando

@@ -145,7 +145,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     'checkout-ticket',
-    (_event, { id }: { id: number }) => {
+    (_event, { id, paymentMethod }: { id: number; paymentMethod?: string }) => {
       try {
         const tickets = dbOperations.getAllActiveTickets()
         const ticket = tickets.find((t: any) => t.id === id)
@@ -170,7 +170,7 @@ app.whenReady().then(() => {
           aplicarPernoite
         )
 
-        dbOperations.checkoutTicket(id, valor, saida)
+        dbOperations.checkoutTicket(id, valor, saida, paymentMethod)
 
         if (usaControleDiario(ticket.tipo) && freeMinutes < 999999) {
           const segs = splitStayIntoLocalDaySegments(ticket.entrada, saida)
@@ -433,7 +433,7 @@ app.whenReady().then(() => {
         rows.push({
           date: t.saida ?? t.entrada,
           type: 'Avulso',
-          description: `Ticket ${t.placa}`,
+          description: `Ticket ${t.placa}${t.payment_method ? ` - ${t.payment_method}` : ''}`,
           value: t.valor ?? 0
         })
       })
