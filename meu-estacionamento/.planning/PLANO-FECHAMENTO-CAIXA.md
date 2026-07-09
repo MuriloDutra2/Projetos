@@ -291,7 +291,7 @@ Confirmar os dois exemplos acima com a gerência antes de executar.
 | 6 | Pagamento no avulso | `feat(checkout): forma de pagamento` ✅ | Checklist pátio completo |
 | 7 | Turnos | `feat(caixa): fechamento por turno de 12h` ✅ | UAT fechamento diurno + noturno |
 
-| 8 | Cota única por estadia | `fix(cobranca): meia-noite não renova cota da estadia` | Aprovação da gerência + UAT 23h→01:30 |
+| 8 | Cota única por estadia | `fix(cobranca): meia-noite não renova cota da estadia` ✅ (aprovada pela gerência em 09/07/2026) | UAT 23h→01:30 = R$ 4 |
 
 Detalhe de implementação da Fase 7 (corrente de fechamentos): o intervalo real coberto por
 cada fechamento vai do **fim do fechamento anterior** (ou do início natural do turno, no

@@ -35,6 +35,7 @@
 - [ ] **Mensalista pago:** cliente com vencimento futuro mostra "Em dia" e entra no pátio como MENSALISTA (caso do vídeo de 09/07).
 - [ ] **Saída após 21h:** registrar uma saída depois das 21h e conferir que cai no dia certo no Relatório, Financeiro e Histórico.
 - [ ] **Total do mês:** conferir que o total de avulsos do Financeiro bate com a soma da tabela e com o CSV exportado.
+- [ ] **Cota à meia-noite (Fase 8):** entrada 23h e saída 01:30 deve cobrar R$ 4 (a meia-noite não renova a cota; o vermelho do pátio agora coincide com a cobrança). Pernoite (18h+ → até 8h) continua R$ 50.
 
 ### 3c. Fechamento de caixa por turno (atualização jul/2026)
 - [ ] **Aba Caixa:** abrir a aba, conferir o badge do turno atual (diurno 07h–19h / noturno 19h–07h) e a contagem regressiva.

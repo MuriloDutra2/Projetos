@@ -115,12 +115,15 @@ describe('calcularValor', () => {
       const saida = dia('2025-01-17', 7, 0)
       expect(calcularValor(entrada, 90, saida, u(0), true)).toBe(50)
     })
-    it('1.13 Estadia cruza meia-noite sem pernoite: cota 90 min por dia civil → R$ 36', () => {
+    it('1.13 Estadia cruza meia-noite sem pernoite: cota ÚNICA de 90 min → R$ 44', () => {
+      // Fase 8 (aprovada pela gerência 09/07/2026): antes a meia-noite renovava a
+      // cota (2ª cota de 90 min no dia 16 → R$ 36); agora a estadia contínua tem
+      // uma cota só: 720 min − 90 = 630 → 11h → R$ 44.
       const entrada = dia('2025-01-15', 19, 0)
       const saida = dia('2025-01-16', 7, 0)
       const v = calcularValor(entrada, 90, saida, u(0), false)
       expect(v).not.toBe(50)
-      expect(v).toBe(36)
+      expect(v).toBe(44)
     })
     it('1.14 Mesmo dia (não é pernoite) → 7h excedente R$ 28', () => {
       const entrada = dia('2025-01-15', 10, 0)
@@ -185,18 +188,46 @@ describe('localDateKeyFromDate', () => {
   })
 })
 
-describe('Cota por dia civil (uso diferente por data)', () => {
-  it('cada dia civil aplica seu próprio saldo de minutos já usados', () => {
+describe('Cota única por estadia (Fase 8 — meia-noite não renova)', () => {
+  it('caso do vídeo: entra 23h, sai 01:30 → 60 min excedentes = R$ 4 (antes era R$ 0)', () => {
+    const entrada = dia('2025-01-15', 23, 0)
+    const saida = dia('2025-01-16', 1, 30)
+    expect(calcularValor(entrada, 90, saida, u(0), false)).toBe(4)
+  })
+
+  it('cruza a meia-noite ainda dentro da cota: 23h → 00:20 (80 min) = R$ 0', () => {
+    const entrada = dia('2025-01-15', 23, 0)
+    const saida = dia('2025-01-16', 0, 20)
+    expect(calcularValor(entrada, 90, saida, u(0), false)).toBe(0)
+  })
+
+  it('a cota desconta o uso do dia da ENTRADA; o uso do dia seguinte é irrelevante', () => {
     const entrada = dia('2025-01-15', 19, 0)
     const saida = dia('2025-01-16', 7, 0)
     const lookup: Record<string, number> = {
       '2025-01-15': 80,
-      '2025-01-16': 0
+      '2025-01-16': 500
     }
     const getByDay: GetDailyUsedForDate = (key) => lookup[key] ?? 0
-    const v = calcularValor(entrada, 90, saida, getByDay, false)
-    // Dia 1: 300 min, 10 min grátis efetivos → 290 cobráveis; dia 2: 420 min, 90 grátis → 330 → total 620 → ceil(620/60)=11h → R$44
-    expect(v).toBe(44)
+    // Cota única: 90 − 80 (usados no dia da entrada) = 10 min grátis;
+    // 720 − 10 = 710 → ceil(710/60) = 12h → R$ 48.
+    expect(calcularValor(entrada, 90, saida, getByDay, false)).toBe(48)
+  })
+
+  it('anti-fraude preservado: reentrada no dia seguinte com cota já consumida cobra', () => {
+    // A estadia da noite anterior registrou uso no dia 16 (via daily_free_usage);
+    // uma NOVA entrada no dia 16 encontra a cota do dia consumida.
+    const entrada = dia('2025-01-16', 10, 0)
+    const saida = dia('2025-01-16', 11, 0)
+    const lookup: Record<string, number> = { '2025-01-16': 90 }
+    const getByDay: GetDailyUsedForDate = (key) => lookup[key] ?? 0
+    expect(calcularValor(entrada, 90, saida, getByDay, false)).toBe(4)
+  })
+
+  it('pernoite tem precedência sobre a cota única (R$ 50 fixo)', () => {
+    const entrada = dia('2025-01-15', 19, 0)
+    const saida = dia('2025-01-17', 7, 0)
+    expect(calcularValor(entrada, 90, saida, u(0), true)).toBe(50)
   })
 })
 
