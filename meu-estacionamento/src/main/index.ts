@@ -423,23 +423,10 @@ app.whenReady().then(() => {
       const cfg = getConfig()
       const dayStart = cfg.shiftDayStartHour ?? 7
       const nightStart = cfg.shiftNightStartHour ?? 19
-      const now = new Date()
-      const shift = currentShift(now, dayStart, nightStart)
-      const last = dbOperations.getLastShiftClosure()
-      const alreadyClosed =
-        !!last && last.shift_date === shift.shiftDate && last.shift_type === shift.shiftType
-      // Janela ao vivo: começa onde o último fechamento terminou (corrente sem
-      // buracos); sem fechamento anterior, começa no início natural do turno.
-      const windowStartIso = last ? last.end_iso : shift.startIso
-      const live = alreadyClosed
-        ? null
-        : dbOperations.getShiftLiveData(windowStartIso, now.toISOString())
+      const shift = currentShift(new Date(), dayStart, nightStart)
       return {
         shift: { ...shift, label: shiftLabel(shift.shiftType, dayStart, nightStart) },
-        windowStartIso,
-        alreadyClosed,
-        live,
-        closures: dbOperations.listShiftClosures(20)
+        ...dbOperations.getShiftOverview(shift)
       }
     } catch (error) {
       console.error('Erro ao buscar visão do turno:', error)

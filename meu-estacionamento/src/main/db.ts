@@ -551,6 +551,23 @@ function isGaragemDebtorInternal(
   return !isClientCoveredNow(clientId, undefined, now)
 }
 
+/**
+ * Início da janela ao vivo do turno: onde o último fechamento terminou
+ * (corrente sem buracos) ou o início natural do turno. Se o fim do último
+ * fechamento estiver "no futuro" (relógio do PC offline acertado para trás
+ * depois de um fechamento), recua para o instante atual — sem isso, as
+ * transações novas cairiam dentro do intervalo já fechado e sumiriam de
+ * todos os fechamentos seguintes.
+ */
+function resolveShiftWindowStart(
+  last: ShiftClosureRow | undefined,
+  shiftStartIso: string,
+  nowIso: string
+): string {
+  if (!last) return shiftStartIso
+  return last.end_iso <= nowIso ? last.end_iso : nowIso
+}
+
 /** Tipo de ticket ativo conforme o plano do cliente. */
 export function ticketTipoForPlan(planType: string): string {
   if (planType === 'GARAGEM') return 'GARAGEM'
@@ -1054,6 +1071,21 @@ export const dbOperations = {
   listShiftClosures: (limit = 20) => stmts.listShiftClosures.all(limit) as ShiftClosureRow[],
 
   /**
+   * Visão do turno para a tela de fechamento: janela ao vivo, fechamento
+   * existente e histórico — única fonte do invariante da corrente
+   * (compartilhada com closeShift).
+   */
+  getShiftOverview: (shift: { shiftDate: string; shiftType: string; startIso: string }) => {
+    const nowIso = new Date().toISOString()
+    const last = stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined
+    const alreadyClosed =
+      !!last && last.shift_date === shift.shiftDate && last.shift_type === shift.shiftType
+    const windowStartIso = resolveShiftWindowStart(last, shift.startIso, nowIso)
+    const live = alreadyClosed ? null : dbOperations.getShiftLiveData(windowStartIso, nowIso)
+    return { windowStartIso, alreadyClosed, live, closures: dbOperations.listShiftClosures(20) }
+  },
+
+  /**
    * Fecha o turno atual: INSERT imutável cobrindo [fim do fechamento anterior
    * (ou início natural do turno), agora]. UNIQUE(shift_date, shift_type)
    * bloqueia fechar o mesmo turno duas vezes.
@@ -1066,8 +1098,8 @@ export const dbOperations = {
     if (last && last.shift_date === shift.shiftDate && last.shift_type === shift.shiftType) {
       return { success: false as const, error: 'Este turno já foi fechado.' }
     }
-    const windowStart = last ? last.end_iso : shift.startIso
     const closedAt = new Date().toISOString()
+    const windowStart = resolveShiftWindowStart(last, shift.startIso, closedAt)
     const live = dbOperations.getShiftLiveData(windowStart, closedAt)
     const cashCounted = data.cashCounted ?? null
     const cashDifference = cashCounted != null ? cashCounted - live.cashExpected : null
