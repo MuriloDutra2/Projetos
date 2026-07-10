@@ -93,7 +93,9 @@ export default function MensalistasTabela({
                     {c.plan_type === 'GARAGEM' ? c.garageBillingLabel ?? '—' : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-300">
-                    {c.expiry_date ? format(new Date(c.expiry_date), 'dd/MM/yyyy') : '—'}
+                    {c.expiry_date
+                      ? format(new Date(c.expiry_date.slice(0, 10) + 'T12:00:00'), 'dd/MM/yyyy')
+                      : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-300">
                     {c.lastPaymentDate

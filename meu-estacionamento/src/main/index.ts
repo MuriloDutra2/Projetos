@@ -109,9 +109,11 @@ app.whenReady().then(() => {
   ipcMain.handle('create-ticket', (_event, { placa, tipo, cpf }: { placa: string; tipo: string; cpf?: string }) => {
     try {
       const placaNorm = normalizePlate(placa)
-      if (!placaNorm) return { success: false, error: 'Placa inválida' }
+      // Validação esperada vai em `message` (exibida limpa, título "Atenção"),
+      // não em `error` (que o renderer trata como falha inesperada).
+      if (!placaNorm) return { success: false, message: 'Placa inválida.' }
       if (placaNorm.length < 7) {
-        return { success: false, error: 'Placa incompleta. Digite os 7 caracteres da placa.' }
+        return { success: false, message: 'Placa incompleta. Digite os 7 caracteres da placa.' }
       }
       if (dbOperations.hasActiveTicket(placaNorm)) {
         return { success: false, message: 'Veículo já está no pátio!' }

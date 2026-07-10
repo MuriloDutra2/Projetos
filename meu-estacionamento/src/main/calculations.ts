@@ -1,6 +1,9 @@
 /**
- * Verifica se a estadia se qualifica como pernoite (18h às 08h).
- * Pernoite: entrada entre 18h e 23:59, saída entre 00h e 08h do dia seguinte.
+ * Regra LEGADA de pernoite (R$ 50 fixo), mantida por compatibilidade: só
+ * dispara para estadias ACIMA de 24 horas (diffDias >= 1) com entrada
+ * 18h–23:59 e saída 00h–08h. Decisão da gerência (10/07/2026): a categoria
+ * "pernoite" não existe mais na operação — o avulso que passa a noite
+ * (ex.: 19h→7h) paga tarifa horária normal com cota única.
  */
 export function isPernoite(entrada: string, saida: string): boolean {
   const e = new Date(entrada)
