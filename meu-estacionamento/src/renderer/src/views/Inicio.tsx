@@ -331,7 +331,7 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
           )}
           {subscriptionInfo?.isSubscriber && subscriptionInfo?.isExpired && (
             <div className="p-3 rounded-lg bg-amber-900/40 border border-amber-600 text-amber-200 text-sm">
-              PLANO VENCIDO EM {format(new Date(subscriptionInfo.expiryDate), 'dd/MM/yyyy')}! Cobrar como avulso?
+              PLANO VENCIDO EM {format(new Date(subscriptionInfo.expiryDate.slice(0, 10) + 'T12:00:00'), 'dd/MM/yyyy')}! Cobrar como avulso?
             </div>
           )}
           {plateWasInToday === true && (

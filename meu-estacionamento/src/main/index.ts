@@ -110,6 +110,9 @@ app.whenReady().then(() => {
     try {
       const placaNorm = normalizePlate(placa)
       if (!placaNorm) return { success: false, error: 'Placa inválida' }
+      if (placaNorm.length < 7) {
+        return { success: false, error: 'Placa incompleta. Digite os 7 caracteres da placa.' }
+      }
       if (dbOperations.hasActiveTicket(placaNorm)) {
         return { success: false, message: 'Veículo já está no pátio!' }
       }
