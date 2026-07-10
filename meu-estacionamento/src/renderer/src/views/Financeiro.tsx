@@ -4,6 +4,7 @@ import { clsx } from 'clsx'
 import { getFinanceMonthData, exportFinancialCsv, type FinanceMonthData } from '../services/financial'
 import { useDialog } from '../providers/DialogProvider'
 import { friendlyError } from '../utils/errorHandler'
+import { mergeTransactions } from '../utils/transactions'
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
@@ -25,23 +26,10 @@ export default function Financeiro(): React.JSX.Element {
   const totalRenovacoesMes = monthData?.totalRenovacoes ?? 0
   const financialByMethod = monthData?.byMethod ?? []
 
-  const mixedTransactions = useMemo(() => {
-    if (!monthData) return []
-    return [
-      ...monthData.tickets.map((h) => ({
-        date: h.saida,
-        type: 'avulso' as const,
-        description: `Ticket ${h.placa}${h.payment_method ? ` (${h.payment_method})` : ''}`,
-        value: h.valor ?? 0
-      })),
-      ...monthData.payments.map((p) => ({
-        date: p.payment_date,
-        type: 'renovacao' as const,
-        description: `Renovação - ${p.client_name}${p.payment_method ? ` (${p.payment_method})` : ''}`,
-        value: p.amount ?? 0
-      }))
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-  }, [monthData])
+  const mixedTransactions = useMemo(
+    () => (monthData ? mergeTransactions(monthData.tickets, monthData.payments) : []),
+    [monthData]
+  )
 
   return (
     <div className="flex-1 p-6 overflow-y-auto">

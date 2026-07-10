@@ -7,10 +7,14 @@
  * o veículo entrava como avulso e gerava cobrança fantasma (quebra de caixa).
  */
 
-/** YYYY-MM-DD do calendário local. */
-export function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+import { localDateKeyFromDate } from './calculations'
+
+/**
+ * YYYY-MM-DD do calendário local — alias do helper do motor de cobrança.
+ * Fonte única: divergência entre duas implementações de "dia local"
+ * reintroduziria exatamente a classe de bug de fuso corrigida nesta branch.
+ */
+export const localDateStr = localDateKeyFromDate
 
 /** YYYY-MM do calendário local. */
 export function localMonthKey(d: Date): string {

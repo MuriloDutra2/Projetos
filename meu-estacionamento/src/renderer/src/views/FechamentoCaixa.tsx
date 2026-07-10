@@ -10,26 +10,8 @@ import {
 } from '../services/shifts'
 import { useDialog } from '../providers/DialogProvider'
 import { friendlyError } from '../utils/errorHandler'
-
-/** Permite apenas números e vírgula; formata como 0,00 */
-function maskCurrency(value: string): string {
-  const cleaned = value.replace(/[^\d,]/g, '')
-  const parts = cleaned.split(',')
-  if (parts.length > 2) return value
-  if (parts.length === 2 && parts[1].length > 2) {
-    parts[1] = parts[1].slice(0, 2)
-    return parts.join(',')
-  }
-  return cleaned
-}
-
-function parseCurrencyToNumber(value: string): number {
-  if (!value || !value.trim()) return 0
-  const normalized = value.trim().replace(',', '.')
-  return Math.max(0, Number(normalized) || 0)
-}
-
-const money = (v: number): string => `R$ ${v.toFixed(2).replace('.', ',')}`
+import { maskCurrency, parseCurrencyToNumber, formatBRL as money } from '../utils/masks'
+import { mergeTransactions } from '../utils/transactions'
 
 function closurePeriodLabel(c: ShiftClosure): string {
   return `${format(new Date(c.start_iso), 'dd/MM HH:mm')} – ${format(new Date(c.end_iso), 'dd/MM HH:mm')}`
@@ -93,23 +75,10 @@ export default function FechamentoCaixa(): React.JSX.Element {
   const hasCashInput = cashCountedStr.trim().length > 0
   const cashDiff = hasCashInput && live ? cashCounted - live.cashExpected : null
 
-  const transactions = useMemo(() => {
-    if (!live) return []
-    return [
-      ...live.tickets.map((t) => ({
-        date: t.saida,
-        type: 'avulso' as const,
-        description: `Ticket ${t.placa}${t.payment_method ? ` · ${t.payment_method}` : ''}`,
-        value: t.valor ?? 0
-      })),
-      ...live.payments.map((p) => ({
-        date: p.payment_date,
-        type: 'renovacao' as const,
-        description: `${p.client_name}${p.payment_method ? ` · ${p.payment_method}` : ''}${p.competency_month ? ` · comp. ${p.competency_month}` : ''}`,
-        value: p.amount ?? 0
-      }))
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-  }, [live])
+  const transactions = useMemo(
+    () => (live ? mergeTransactions(live.tickets, live.payments) : []),
+    [live]
+  )
 
   const handleClose = (): void => {
     if (!overview || overview.alreadyClosed) return

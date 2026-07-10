@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { maskCPF, maskPhone } from '../utils/masks'
+import { maskCPF, maskPhone, maskCurrency, parseCurrencyToNumber } from '../utils/masks'
 import { friendlyError } from '../utils/errorHandler'
 
 const PLANO_NOMES: Record<string, string> = {
@@ -8,24 +8,6 @@ const PLANO_NOMES: Record<string, string> = {
   MENSAL_CARRO_MOTO: 'Mensal Carro e Moto',
   GARAGEM: 'Garagem',
   FUNCIONARIO: 'Funcionário (Livre)'
-}
-
-/** Permite apenas números e vírgula; formata como 0,00 */
-function maskCurrency(value: string): string {
-  const cleaned = value.replace(/[^\d,]/g, '')
-  const parts = cleaned.split(',')
-  if (parts.length > 2) return value
-  if (parts.length === 2 && parts[1].length > 2) {
-    parts[1] = parts[1].slice(0, 2)
-    return parts.join(',')
-  }
-  return cleaned
-}
-
-function parseCurrencyToNumber(value: string): number {
-  if (!value || !value.trim()) return 0
-  const normalized = value.trim().replace(',', '.')
-  return Math.max(0, Number(normalized) || 0)
 }
 
 interface ModalRenovarProps {

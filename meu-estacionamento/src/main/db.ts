@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, copyFileSync, readdirSync, unlinkSync, readFileS
 import { randomUUID } from 'crypto'
 import { effectiveBillingDayInMonth } from './garageDates'
 import { localDayToIsoRange, localMonthToIsoRange } from './dateRanges'
-import { isCoveredNow, financialStatusFor, localDateStr } from './clientStatus'
+import { isCoveredNow, financialStatusFor, localDateStr, localMonthKey } from './clientStatus'
 
 const dbPath =
   process.env.NODE_ENV === 'development'
@@ -532,10 +532,6 @@ export interface ShiftClosureRow {
 
 export { effectiveBillingDayInMonth } from './garageDates'
 
-function competencyKeyFromDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-}
-
 /**
  * Cliente coberto hoje: vencimento futuro, competência máxima paga cobre o mês
  * atual, ou pagamento lançado no mês atual. Se `expiryDate` não for passado,
@@ -546,7 +542,7 @@ function isClientCoveredNow(clientId: number, expiryDate: string | null | undefi
     expiryDate !== undefined
       ? expiryDate
       : (stmts.getClientById.get(clientId) as { expiry_date?: string } | undefined)?.expiry_date
-  const monthKey = competencyKeyFromDate(now)
+  const monthKey = localMonthKey(now)
   const maxCompRow = stmts.getMaxCompetencyByClientId.get(clientId) as { max_competency?: string } | undefined
   const { start, end } = localMonthToIsoRange(monthKey)
   const paidCurrentMonth = !!stmts.hasPaymentInMonth.get(clientId, monthKey, start, end)
@@ -737,7 +733,7 @@ export const dbOperations = {
     const expiryDateOnly = (s: string) => (s || '').slice(0, 10)
     // Cobertura em lote: chave/intervalo do mês calculados uma vez e duas
     // consultas GROUP BY no lugar de 2 sondas por cliente (N+1).
-    const monthKey = competencyKeyFromDate(today)
+    const monthKey = localMonthKey(today)
     const monthRange = localMonthToIsoRange(monthKey)
     const maxCompByClient = new Map(
       (stmts.getMaxCompetencyPerClient.all() as { client_id: number; max_competency: string | null }[]).map(

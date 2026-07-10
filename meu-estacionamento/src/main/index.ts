@@ -482,11 +482,13 @@ app.whenReady().then(() => {
           ? dbOperations.getFinanceMonthData(data.month, data.year)
           : dbOperations.getFinanceDataForRange()
       const rows: { date: string; type: string; description: string; value: number }[] = []
+      // Mesmo formato de descrição do renderer (utils/transactions.ts) — a
+      // transação deve ler igual no Financeiro, no Fechamento e no CSV.
       monthData.tickets.forEach((t) => {
         rows.push({
           date: t.saida ?? t.entrada,
           type: 'Avulso',
-          description: `Ticket ${t.placa}${t.payment_method ? ` - ${t.payment_method}` : ''}`,
+          description: `Ticket ${t.placa}${t.payment_method ? ` (${t.payment_method})` : ''}`,
           value: t.valor ?? 0
         })
       })
@@ -494,7 +496,7 @@ app.whenReady().then(() => {
         rows.push({
           date: p.payment_date,
           type: 'Renovação',
-          description: `${p.client_name ?? ''}${p.payment_method ? ` - ${p.payment_method}` : ''}${p.competency_month ? ` - Comp ${p.competency_month}` : ''}`,
+          description: `${p.client_name ?? ''}${p.payment_method ? ` (${p.payment_method})` : ''}${p.competency_month ? ` - comp. ${p.competency_month}` : ''}`,
           value: p.amount ?? 0
         })
       })
