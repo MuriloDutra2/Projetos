@@ -101,6 +101,27 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
     setModalOpen(true)
   }
 
+  // Revalida o valor enquanto o modal está aberto: se a cota grátis vencer com
+  // o modal em tela, o valor e os botões de forma de pagamento aparecem antes
+  // do confirmar (sem isso o pagamento sairia como "Não informado").
+  useEffect(() => {
+    if (!modalOpen || !checkoutTicket) return
+    const t = setInterval(async () => {
+      try {
+        const res = await calculateValue({
+          entrada: checkoutTicket.entrada,
+          placa: checkoutTicket.placa,
+          tipo: checkoutTicket.tipo,
+          ...(checkoutTicket.cpf ? { cpf: checkoutTicket.cpf } : {})
+        })
+        setCheckoutValor(res.valor)
+      } catch {
+        // mantém o último valor conhecido
+      }
+    }, 15000)
+    return () => clearInterval(t)
+  }, [modalOpen, checkoutTicket])
+
   const handleCheckoutConfirm = async (paymentMethod?: string) => {
     if (!checkoutTicket) return
     setCheckoutLoading(true)
