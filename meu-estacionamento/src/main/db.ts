@@ -195,6 +195,11 @@ db.exec(`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_seq ON sync_log(seq)`)
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_node ON sync_log(node_id, seq)`)
 
+// Índices para as consultas por intervalo (financeiro/turnos/placa-no-dia);
+// sem eles, cada consulta varre a tabela inteira, que só cresce.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tickets_status_saida ON tickets(status, saida)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_payment_date ON subscription_payments(payment_date)`)
+
 // ── Fechamento de caixa por turno de 12h ─────────────────────────────────
 // Registro IMUTÁVEL: sem UPDATE/DELETE; UNIQUE impede fechar o mesmo turno
 // duas vezes. start_iso/end_iso guardam o intervalo REAL coberto — cada
@@ -307,6 +312,20 @@ const stmts = {
     FROM subscription_payments
     WHERE client_id = ? AND competency_month IS NOT NULL
   `),
+  /** Maior competência paga por cliente, em lote (evita N+1 no getClients). */
+  getMaxCompetencyPerClient: db.prepare(`
+    SELECT client_id, MAX(competency_month) as max_competency
+    FROM subscription_payments
+    WHERE competency_month IS NOT NULL
+    GROUP BY client_id
+  `),
+  /** Clientes com pagamento no mês (competência ou, sem competência, payment_date no intervalo). */
+  getClientsPaidInMonth: db.prepare(`
+    SELECT DISTINCT client_id
+    FROM subscription_payments
+    WHERE competency_month = ?
+       OR (competency_month IS NULL AND payment_date >= ? AND payment_date < ?)
+  `),
   getVehicleByPlate: db.prepare(
     'SELECT cv.*, c.name, c.plan_type, c.expiry_date, c.active, c.garage_billing_day, c.garage_billing_month FROM client_vehicles cv JOIN clients c ON c.id = cv.client_id WHERE cv.plate = ?'
   ),
@@ -409,9 +428,9 @@ const stmts = {
     SET tipo = ?
     WHERE status = 'ATIVO' AND placa = ?
   `),
-  /** Total avulsos (valor) no dia local (saída em [início, fim) em ISO UTC). */
+  /** Contagem e total de avulsos no intervalo [início, fim) ISO UTC. */
   getTotalAvulsosForRange: db.prepare(
-    "SELECT COALESCE(SUM(valor), 0) as total FROM tickets WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?"
+    "SELECT COUNT(*) as count, COALESCE(SUM(valor), 0) as total FROM tickets WHERE status = 'FINALIZADO' AND saida >= ? AND saida < ?"
   ),
   /**
    * Contagem e valor de planos vendidos (renovações) no intervalo [início, fim) ISO UTC.
@@ -559,6 +578,30 @@ function isGaragemDebtorInternal(
  * transações novas cairiam dentro do intervalo já fechado e sumiriam de
  * todos os fechamentos seguintes.
  */
+/** Une as quebras por forma de avulsos e renovações; 'Dinheiro' vira o esperado da gaveta. */
+function mergeByMethod(
+  avulsos: { payment_method: string; total: number }[],
+  renovacoes: { payment_method: string; total: number }[]
+): {
+  byMethod: { method: string; avulsos: number; renovacoes: number; total: number }[]
+  cashExpected: number
+} {
+  const merged = new Map<string, { method: string; avulsos: number; renovacoes: number; total: number }>()
+  for (const r of avulsos) {
+    merged.set(r.payment_method, { method: r.payment_method, avulsos: r.total, renovacoes: 0, total: r.total })
+  }
+  for (const r of renovacoes) {
+    const cur = merged.get(r.payment_method) ?? { method: r.payment_method, avulsos: 0, renovacoes: 0, total: 0 }
+    cur.renovacoes += r.total
+    cur.total += r.total
+    merged.set(r.payment_method, cur)
+  }
+  return {
+    byMethod: [...merged.values()].sort((a, b) => b.total - a.total),
+    cashExpected: merged.get('Dinheiro')?.total ?? 0
+  }
+}
+
 function resolveShiftWindowStart(
   last: ShiftClosureRow | undefined,
   shiftStartIso: string,
@@ -692,13 +735,32 @@ export const dbOperations = {
     const today = new Date()
     const todayStr = localDateStr(today)
     const expiryDateOnly = (s: string) => (s || '').slice(0, 10)
+    // Cobertura em lote: chave/intervalo do mês calculados uma vez e duas
+    // consultas GROUP BY no lugar de 2 sondas por cliente (N+1).
+    const monthKey = competencyKeyFromDate(today)
+    const monthRange = localMonthToIsoRange(monthKey)
+    const maxCompByClient = new Map(
+      (stmts.getMaxCompetencyPerClient.all() as { client_id: number; max_competency: string | null }[]).map(
+        (m) => [m.client_id, m.max_competency]
+      )
+    )
+    const paidThisMonth = new Set(
+      (stmts.getClientsPaidInMonth.all(monthKey, monthRange.start, monthRange.end) as { client_id: number }[]).map(
+        (m) => m.client_id
+      )
+    )
     return rows.map((r) => {
       const exp = expiryDateOnly(r.expiry_date)
       const isExpired = exp < todayStr
       const isMensalista = typeof r.plan_type === 'string' && r.plan_type.startsWith('MENSAL')
       const isGaragemPlan = r.plan_type === 'GARAGEM'
       const latestPayment = stmts.getLatestPaymentByClientId.get(r.id) as any
-      const covered = isClientCoveredNow(r.id, r.expiry_date, today)
+      const covered = isCoveredNow({
+        expiryDate: r.expiry_date,
+        maxPaidCompetency: maxCompByClient.get(r.id) ?? null,
+        paidCurrentMonth: paidThisMonth.has(r.id),
+        now: today
+      })
       let financialStatus = 'Em dia'
       if (isMensalista) {
         financialStatus = financialStatusFor(covered, 10, today)
@@ -996,8 +1058,6 @@ export const dbOperations = {
    * somavam listas truncadas no JS). Intervalo aberto = todo o histórico.
    */
   getFinanceDataForRange: (start = '0000-01-01', end = '9999-12-31') => {
-    const avulsosRow = stmts.getTotalAvulsosForRange.get(start, end) as { total: number } | undefined
-    const planosRow = stmts.getPlanosVendidosForRange.get(start, end) as { count: number; total: number } | undefined
     const tickets = stmts.getFinishedTicketsForRange.all(start, end) as {
       id: number
       placa: string
@@ -1008,15 +1068,20 @@ export const dbOperations = {
       payment_method: string | null
     }[]
     const payments = stmts.getPaymentsForRange.all(start, end) as any[]
-    const byMethod = stmts.getFinancialHistoryByMethod.all(start, end) as {
-      payment_method: string
-      total: number
-    }[]
+    // Totais/quebra derivados das linhas já buscadas — sem scans SQL extras.
+    const byMethodMap = new Map<string, number>()
+    for (const p of payments) {
+      const m = p.payment_method ?? 'Não informado'
+      byMethodMap.set(m, (byMethodMap.get(m) ?? 0) + (p.amount ?? 0))
+    }
+    const byMethod = [...byMethodMap]
+      .map(([payment_method, total]) => ({ payment_method, total }))
+      .sort((a, b) => b.total - a.total)
     return {
-      totalAvulsos: avulsosRow?.total ?? 0,
+      totalAvulsos: tickets.reduce((s, t) => s + (t.valor ?? 0), 0),
       countAvulsos: tickets.length,
-      totalRenovacoes: planosRow?.total ?? 0,
-      countRenovacoes: planosRow?.count ?? 0,
+      totalRenovacoes: payments.reduce((s, p) => s + (p.amount ?? 0), 0),
+      countRenovacoes: payments.filter((p) => !p.is_advance).length,
       byMethod,
       tickets,
       payments
@@ -1032,27 +1097,56 @@ export const dbOperations = {
   // ── Fechamento de caixa por turno ────────────────────────────────────────
 
   /**
-   * Dados ao vivo do caixa no intervalo [início, fim) ISO UTC: totais,
-   * quebra por forma (avulsos + renovações somados) e transações.
+   * Totais do caixa no intervalo — SÓ agregados SQL, sem materializar linhas.
+   * Usado pelo fechamento (que persiste apenas agregados).
    */
-  getShiftLiveData: (start: string, end: string) => {
-    const base = dbOperations.getFinanceDataForRange(start, end)
+  getShiftTotals: (start: string, end: string) => {
+    const avulsosRow = stmts.getTotalAvulsosForRange.get(start, end) as
+      | { count: number; total: number }
+      | undefined
+    const planosRow = stmts.getPlanosVendidosForRange.get(start, end) as
+      | { count: number; total: number }
+      | undefined
     const avulsosByMethod = stmts.getAvulsosByMethodForRange.all(start, end) as {
       payment_method: string
       total: number
     }[]
-    const merged = new Map<string, { method: string; avulsos: number; renovacoes: number; total: number }>()
-    for (const r of avulsosByMethod) {
-      merged.set(r.payment_method, { method: r.payment_method, avulsos: r.total, renovacoes: 0, total: r.total })
+    const renovByMethod = stmts.getFinancialHistoryByMethod.all(start, end) as {
+      payment_method: string
+      total: number
+    }[]
+    const { byMethod, cashExpected } = mergeByMethod(avulsosByMethod, renovByMethod)
+    const totalAvulsos = avulsosRow?.total ?? 0
+    const totalRenovacoes = planosRow?.total ?? 0
+    return {
+      totalAvulsos,
+      countAvulsos: avulsosRow?.count ?? 0,
+      totalRenovacoes,
+      countRenovacoes: planosRow?.count ?? 0,
+      total: totalAvulsos + totalRenovacoes,
+      byMethod,
+      cashExpected
     }
-    for (const r of base.byMethod) {
-      const cur = merged.get(r.payment_method) ?? { method: r.payment_method, avulsos: 0, renovacoes: 0, total: 0 }
-      cur.renovacoes += r.total
-      cur.total += r.total
-      merged.set(r.payment_method, cur)
+  },
+
+  /**
+   * Dados ao vivo do caixa no intervalo [início, fim) ISO UTC: totais,
+   * quebra por forma (avulsos + renovações somados) e transações — tudo
+   * derivado das mesmas duas buscas de linhas (sem scans duplicados).
+   */
+  getShiftLiveData: (start: string, end: string) => {
+    const base = dbOperations.getFinanceDataForRange(start, end)
+    const avulsosByMethodMap = new Map<string, number>()
+    for (const t of base.tickets) {
+      if ((t.valor ?? 0) <= 0) continue
+      const m = t.payment_method ?? 'Não informado'
+      avulsosByMethodMap.set(m, (avulsosByMethodMap.get(m) ?? 0) + (t.valor ?? 0))
     }
-    const byMethod = [...merged.values()].sort((a, b) => b.total - a.total)
-    const cashExpected = merged.get('Dinheiro')?.total ?? 0
+    const avulsosByMethod = [...avulsosByMethodMap].map(([payment_method, total]) => ({
+      payment_method,
+      total
+    }))
+    const { byMethod, cashExpected } = mergeByMethod(avulsosByMethod, base.byMethod)
     return {
       totalAvulsos: base.totalAvulsos,
       countAvulsos: base.countAvulsos,
@@ -1100,7 +1194,8 @@ export const dbOperations = {
     }
     const closedAt = new Date().toISOString()
     const windowStart = resolveShiftWindowStart(last, shift.startIso, closedAt)
-    const live = dbOperations.getShiftLiveData(windowStart, closedAt)
+    // Só agregados: o fechamento não persiste linhas, então não as materializa.
+    const live = dbOperations.getShiftTotals(windowStart, closedAt)
     const cashCounted = data.cashCounted ?? null
     const cashDifference = cashCounted != null ? cashCounted - live.cashExpected : null
     try {
