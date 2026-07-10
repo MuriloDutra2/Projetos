@@ -102,7 +102,6 @@ declare global {
       getShiftOverview: () => Promise<{
         shift: { shiftDate: string; shiftType: 'DIURNO' | 'NOTURNO'; startIso: string; endIso: string; label: string }
         windowStartIso: string
-        alreadyClosed: boolean
         live: {
           totalAvulsos: number
           countAvulsos: number

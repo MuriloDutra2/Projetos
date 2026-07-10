@@ -200,11 +200,13 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_node ON sync_log(node_id, seq)`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_tickets_status_saida ON tickets(status, saida)`)
 db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_payment_date ON subscription_payments(payment_date)`)
 
-// ── Fechamento de caixa por turno de 12h ─────────────────────────────────
-// Registro IMUTÁVEL: sem UPDATE/DELETE; UNIQUE impede fechar o mesmo turno
-// duas vezes. start_iso/end_iso guardam o intervalo REAL coberto — cada
-// fechamento começa onde o anterior terminou (corrente sem buracos), e o
-// fim é o instante do fechamento. Transação lançada depois entra no próximo.
+// ── Fechamento de caixa ──────────────────────────────────────────────────
+// Cada fechamento é um registro IMUTÁVEL (sem UPDATE/DELETE). Vários caixas
+// podem ser fechados dentro do mesmo turno de 12h — o operador pode fechar e
+// abrir um caixa novo a qualquer momento, sem esperar a troca de turno.
+// start_iso/end_iso guardam o intervalo REAL coberto: cada caixa começa onde
+// o anterior terminou (corrente sem buracos) e vai até o instante do
+// fechamento. Transação lançada depois entra no caixa seguinte.
 db.exec(`
   CREATE TABLE IF NOT EXISTS shift_closures (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,10 +223,50 @@ db.exec(`
     cash_counted REAL,
     cash_difference REAL,
     operator_name TEXT,
-    closed_at TEXT NOT NULL,
-    UNIQUE(shift_date, shift_type)
+    closed_at TEXT NOT NULL
   )
 `)
+
+// Migração: versões anteriores tinham UNIQUE(shift_date, shift_type), que
+// limitava a um fechamento por turno. Agora vários caixas por turno são
+// permitidos — reconstrói a tabela removendo o auto-índice único, preservando
+// as linhas. shift_closures é recente (v1.1.0), então não há dados em produção.
+const shiftClosureIndexes = db
+  .prepare("PRAGMA index_list('shift_closures')")
+  .all() as { name: string; unique: number; origin: string }[]
+if (shiftClosureIndexes.some((i) => i.origin === 'u')) {
+  const rebuildShiftClosures = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE shift_closures_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_date TEXT NOT NULL,
+        shift_type TEXT NOT NULL CHECK(shift_type IN ('DIURNO','NOTURNO')),
+        start_iso TEXT NOT NULL,
+        end_iso TEXT NOT NULL,
+        total_avulsos REAL NOT NULL DEFAULT 0,
+        total_renovacoes REAL NOT NULL DEFAULT 0,
+        count_avulsos INTEGER NOT NULL DEFAULT 0,
+        count_renovacoes INTEGER NOT NULL DEFAULT 0,
+        by_method_json TEXT NOT NULL DEFAULT '[]',
+        cash_expected REAL,
+        cash_counted REAL,
+        cash_difference REAL,
+        operator_name TEXT,
+        closed_at TEXT NOT NULL
+      )
+    `)
+    db.exec(`
+      INSERT INTO shift_closures_new
+      SELECT id, shift_date, shift_type, start_iso, end_iso, total_avulsos,
+             total_renovacoes, count_avulsos, count_renovacoes, by_method_json,
+             cash_expected, cash_counted, cash_difference, operator_name, closed_at
+      FROM shift_closures
+    `)
+    db.exec(`DROP TABLE shift_closures`)
+    db.exec(`ALTER TABLE shift_closures_new RENAME TO shift_closures`)
+  })
+  rebuildShiftClosures()
+}
 
 /** Registra uma operação de escrita no sync_log para replicação LAN. */
 function logSync(
@@ -1161,38 +1203,38 @@ export const dbOperations = {
   listShiftClosures: (limit = 20) => stmts.listShiftClosures.all(limit) as ShiftClosureRow[],
 
   /**
-   * Visão do turno para a tela de fechamento: janela ao vivo, fechamento
-   * existente e histórico — única fonte do invariante da corrente
-   * (compartilhada com closeShift).
+   * Visão do caixa atual para a tela de fechamento: janela ao vivo (o caixa
+   * aberto agora), início da janela e histórico. Única fonte do invariante da
+   * corrente (compartilhada com closeShift). O caixa está SEMPRE aberto e
+   * acumulando desde o fim do último fechamento.
    */
   getShiftOverview: (shift: { shiftDate: string; shiftType: string; startIso: string }) => {
     const nowIso = new Date().toISOString()
     const last = stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined
-    const alreadyClosed =
-      !!last && last.shift_date === shift.shiftDate && last.shift_type === shift.shiftType
     const windowStartIso = resolveShiftWindowStart(last, shift.startIso, nowIso)
-    const live = alreadyClosed ? null : dbOperations.getShiftLiveData(windowStartIso, nowIso)
-    return { windowStartIso, alreadyClosed, live, closures: dbOperations.listShiftClosures(20) }
+    const live = dbOperations.getShiftLiveData(windowStartIso, nowIso)
+    return { windowStartIso, live, closures: dbOperations.listShiftClosures(20) }
   },
 
   /**
-   * Fecha o turno atual: INSERT imutável cobrindo [fim do fechamento anterior
-   * (ou início natural do turno), agora]. UNIQUE(shift_date, shift_type)
-   * bloqueia fechar o mesmo turno duas vezes.
+   * Fecha o caixa atual: INSERT imutável cobrindo [fim do fechamento anterior
+   * (ou início natural do turno), agora]. Ao fechar, um caixa novo já começa a
+   * acumular a partir de agora — vários caixas por turno são permitidos.
+   * Bloqueia apenas o fechamento vazio (sem movimento e sem contagem).
    */
   closeShift: (shift: { shiftDate: string; shiftType: string; startIso: string }, data: {
     cashCounted?: number | null
     operatorName?: string
   }) => {
     const last = stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined
-    if (last && last.shift_date === shift.shiftDate && last.shift_type === shift.shiftType) {
-      return { success: false as const, error: 'Este turno já foi fechado.' }
-    }
     const closedAt = new Date().toISOString()
     const windowStart = resolveShiftWindowStart(last, shift.startIso, closedAt)
     // Só agregados: o fechamento não persiste linhas, então não as materializa.
     const live = dbOperations.getShiftTotals(windowStart, closedAt)
     const cashCounted = data.cashCounted ?? null
+    if (live.total === 0 && cashCounted == null) {
+      return { success: false as const, error: 'Não há movimento neste caixa para fechar.' }
+    }
     const cashDifference = cashCounted != null ? cashCounted - live.cashExpected : null
     try {
       const result = stmts.insertShiftClosure.run(
@@ -1232,11 +1274,8 @@ export const dbOperations = {
       const closure = stmts.getLastShiftClosure.get() as ShiftClosureRow
       return { success: true as const, closure }
     } catch (e) {
-      const err = e as { code?: string }
-      if (err?.code?.startsWith('SQLITE_CONSTRAINT')) {
-        return { success: false as const, error: 'Este turno já foi fechado.' }
-      }
-      throw e
+      console.error('Erro ao gravar fechamento de caixa:', e)
+      return { success: false as const, error: 'Não foi possível registrar o fechamento.' }
     }
   },
 

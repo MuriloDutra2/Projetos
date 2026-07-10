@@ -108,7 +108,7 @@ export default function MensalistasTabela({
                   <td className="px-4 py-3">
                     <span
                       className={clsx(
-                        'px-2 py-1 rounded text-xs font-medium',
+                        'inline-block whitespace-nowrap px-2 py-1 rounded text-xs font-medium',
                         c.financialStatus === 'Em atraso' && 'bg-red-900/60 text-red-300',
                         c.financialStatus === 'Vence hoje' && 'bg-amber-900/60 text-amber-300',
                         c.financialStatus === 'A vencer' && 'bg-blue-900/60 text-blue-300',

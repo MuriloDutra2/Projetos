@@ -37,14 +37,16 @@
 - [ ] **Total do mês:** conferir que o total de avulsos do Financeiro bate com a soma da tabela e com o CSV exportado.
 - [ ] **Cota à meia-noite (Fase 8):** entrada 23h e saída 01:30 deve cobrar R$ 4 (a meia-noite não renova a cota; o vermelho do pátio agora coincide com a cobrança). Pernoite (18h+ → até 8h) continua R$ 50.
 
-### 3c. Fechamento de caixa por turno (atualização jul/2026)
-- [ ] **Aba Caixa:** abrir a aba, conferir o badge do turno atual (diurno 07h–19h / noturno 19h–07h) e a contagem regressiva.
+### 3c. Fechamento de caixa (atualização jul/2026)
+- [ ] **Aba Caixa:** abrir a aba, conferir o aviso "Caixa aberto desde HH:mm", o badge do turno (diurno 07h–19h / noturno 19h–07h) e a contagem regressiva.
 - [ ] **Totais ao vivo:** fazer uma saída paga e uma renovação; conferir que os cards e a quebra por forma atualizam (recarrega a cada 30s).
 - [ ] **Conferência:** digitar o dinheiro contado e conferir sobra/falta contra o "dinheiro esperado".
-- [ ] **Fechar turno:** confirmar o fechamento; o comprovante deve imprimir e o turno aparecer no histórico.
-- [ ] **Fechamento duplicado:** tentar fechar de novo o mesmo turno — deve ser bloqueado ("já foi fechado").
-- [ ] **Transação após fechar:** registrar uma saída depois do fechamento e conferir que ela entra no turno seguinte (card "Desde HH:mm").
-- [ ] **Turno noturno:** fechar um turno noturno de madrugada e conferir que ele cobre desde as 19h de ontem (cruza a meia-noite inteiro).
+- [ ] **Operador obrigatório:** tentar fechar sem preencher o operador → deve avisar "Operador obrigatório" e não fechar.
+- [ ] **Fechar caixa:** com o operador preenchido, confirmar; o comprovante deve imprimir e o caixa aparecer no histórico.
+- [ ] **Abrir novo caixa (mesmo turno):** após fechar, o aviso mostra um caixa novo aberto agora; fazer uma nova saída e fechar de novo ANTES da troca de turno — deve permitir e gerar um segundo registro no histórico.
+- [ ] **Fechamento vazio bloqueado:** tentar fechar um caixa sem nenhum movimento e sem dinheiro contado → deve avisar "Não há movimento neste caixa para fechar".
+- [ ] **Transação após fechar:** registrar uma saída depois do fechamento e conferir que ela entra no caixa novo (card "Desde HH:mm").
+- [ ] **Turno noturno:** fechar um caixa de madrugada e conferir que a janela cobre desde as 19h de ontem (cruza a meia-noite inteiro).
 
 ### 4. Dados persistentes
 - [ ] Fechar o app e abrir de novo: conferir se os tickets e assinantes continuam lá.
