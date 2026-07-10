@@ -6,7 +6,9 @@ Este documento lista todos os casos de teste possíveis, separados por categoria
 
 ## 1. Cálculo de valor (`calculations.ts` – `calcularValor`)
 
-Regras: avulso 90 min grátis/dia; mensalista 150 min grátis/dia; R$ 4,00 por hora ou fração; pernoite (18h–08h) R$ 50,00; `dailyUsedMinutes` reduz o tempo grátis.
+Regras: avulso 90 min grátis por estadia (meia-noite NÃO renova a cota — Fase 8, aprovada em 09/07/2026); mensalista 150 min grátis; R$ 4,00 por hora ou fração; `dailyUsedMinutes` (uso do dia da entrada) reduz o tempo grátis.
+
+**Decisão da gerência (10/07/2026): não existe mais a categoria "pernoite" na operação.** O avulso que passa a noite paga tarifa horária normal (ex.: 19h→7h = 720 min − 90 grátis = R$ 44). No código, a regra legada de R$ 50 fixo (`isPernoite`) só dispara para estadias **acima de 24 horas** com entrada 18h–23:59 e saída 00h–08h — mantida por compatibilidade.
 
 | # | Descrição | Entrada (ISO) | Saída (ISO) | freeMinutes | dailyUsed | aplicarPernoite | Resultado esperado |
 |---|-----------|---------------|-------------|-------------|-----------|-----------------|--------------------|
@@ -21,8 +23,8 @@ Regras: avulso 90 min grátis/dia; mensalista 150 min grátis/dia; R$ 4,00 por h
 | 1.9 | Mensalista 1 min além (2h31) | 10:00 | 12:31 | 150 | 0 | false | 4 |
 | 1.10 | Uso diário consumido parcialmente (60 min já usados) | 10:00 | 12:00 | 90 | 60 | false | 4 |
 | 1.11 | Uso diário consumido todo (90 min já usados) | 10:00 | 11:00 | 90 | 90 | false | 4 |
-| 1.12 | Pernoite: entrada 19h, saída 07h dia seguinte | 19:00 dia 1 | 07:00 dia 2 | 90 | 0 | true | 50 |
-| 1.13 | Pernoite com aplicarPernoite false | 19:00 dia 1 | 07:00 dia 2 | 90 | 0 | false | (valor por horas, não 50) |
+| 1.12 | Pernoite legado (estadia > 24h): entrada 19h dia 1, saída 07h dia 3 | 19:00 dia 1 | 07:00 dia 3 | 90 | 0 | true | 50 |
+| 1.13 | Noite comum (19h→7h) cobra tarifa horária — cota única | 19:00 dia 1 | 07:00 dia 2 | 90 | 0 | false | 44 |
 | 1.14 | Mesmo dia (não é pernoite) | 10:00 | 18:00 | 90 | 0 | true | 32 (8h excedente) |
 | 1.15 | Funcionário (720 min grátis) 10h de estadia | 08:00 | 18:00 | 720 | 0 | false | 0 |
 | 1.16 | Garagem (999999 min) | 08:00 | 20:00 | 999999 | 0 | false | 0 |
@@ -33,13 +35,13 @@ Regras: avulso 90 min grátis/dia; mensalista 150 min grátis/dia; R$ 4,00 por h
 
 ## 2. Pernoite (`calculations.ts` – `isPernoite`)
 
-Pernoite: entrada entre 18h e 23:59, saída entre 00h e 08h do **dia seguinte**.
+Regra legada (mantida por compatibilidade): entrada entre 18h e 23:59, saída entre 00h e 08h **e estadia acima de 24 horas** (`diffDias >= 1`). A noite comum (19h→7h, 12h de estadia) NÃO é pernoite — paga tarifa horária (decisão da gerência, 10/07/2026).
 
 | # | Descrição | Entrada | Saída | Resultado esperado |
 |---|-----------|---------|-------|--------------------|
-| 2.1 | Entrada 18h, saída 07h dia seguinte | 18:00 dia 1 | 07:00 dia 2 | true |
-| 2.2 | Entrada 19h, saída 08h dia seguinte | 19:00 dia 1 | 08:00 dia 2 | true |
-| 2.3 | Entrada 23h, saída 00h30 dia seguinte | 23:00 dia 1 | 00:30 dia 2 | true |
+| 2.1 | Entrada 18h, saída 07h com estadia > 24h | 18:00 dia 1 | 07:00 dia 3 | true |
+| 2.2 | Entrada 19h, saída 08h com estadia > 24h | 19:00 dia 1 | 08:00 dia 3 | true |
+| 2.3 | Noite comum (12h de estadia) | 19:00 dia 1 | 07:00 dia 2 | false |
 | 2.4 | Saída 09h (fora da janela 00h–08h) | 19:00 dia 1 | 09:00 dia 2 | false |
 | 2.5 | Entrada 17h (antes de 18h) | 17:00 dia 1 | 02:00 dia 2 | false |
 | 2.6 | Mesmo dia (sem passar meia-noite) | 10:00 | 20:00 | false |

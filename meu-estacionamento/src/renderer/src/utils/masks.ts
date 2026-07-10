@@ -75,6 +75,30 @@ export function maskDdMm(value: string): string {
   return `${d.slice(0, 2)}/${d.slice(2)}`
 }
 
+/** Permite apenas números e vírgula; formata como 0,00 (entrada de valores em R$). */
+export function maskCurrency(value: string): string {
+  const cleaned = value.replace(/[^\d,]/g, '')
+  const parts = cleaned.split(',')
+  if (parts.length > 2) return value
+  if (parts.length === 2 && parts[1].length > 2) {
+    parts[1] = parts[1].slice(0, 2)
+    return parts.join(',')
+  }
+  return cleaned
+}
+
+/** Converte "12,50" em 12.5 (nunca negativo; vazio/inválido = 0). */
+export function parseCurrencyToNumber(value: string): number {
+  if (!value || !value.trim()) return 0
+  const normalized = value.trim().replace(',', '.')
+  return Math.max(0, Number(normalized) || 0)
+}
+
+/** Formata número como moeda pt-BR: 12.5 → "R$ 12,50". */
+export function formatBRL(v: number): string {
+  return `R$ ${v.toFixed(2).replace('.', ',')}`
+}
+
 /** Interpreta DD/MM; valida calendário (ex. 31/04 inválido). */
 export function parseDdMm(value: string): { day: number; month: number } | null {
   const raw = value.replace(/\D/g, '')

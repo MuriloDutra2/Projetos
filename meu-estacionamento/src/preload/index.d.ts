@@ -35,7 +35,7 @@ declare global {
         savedAt?: string
       }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
       createTicket: (data: { placa: string; tipo: string; cpf?: string }) => Promise<{ success: boolean; id?: number; entrada?: string; billedAsAvulso?: boolean; error?: string; message?: string }>
-      checkoutTicket: (data: { id: number }) => Promise<{ success: boolean; valor?: number; error?: string }>
+      checkoutTicket: (data: { id: number; paymentMethod?: string }) => Promise<{ success: boolean; valor?: number; error?: string }>
       calculateValue: (data: { entrada: string; placa?: string; tipo?: string; cpf?: string }) => Promise<{ valor: number }>
       checkPlateSubscription: (placa: string) => Promise<{
         isSubscriber: boolean
@@ -73,6 +73,15 @@ declare global {
       renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
       getFinancialHistory: () => Promise<any[]>
       getFinancialSummaryByMethod: (data: { month: number; year: number }) => Promise<{ payment_method: string; total: number }[]>
+      getFinanceMonthData: (data: { month: number; year: number }) => Promise<{
+        totalAvulsos: number
+        countAvulsos: number
+        totalRenovacoes: number
+        countRenovacoes: number
+        byMethod: { payment_method: string; total: number }[]
+        tickets: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number | null; payment_method: string | null }[]
+        payments: any[]
+      }>
       getClientStatement: (clientId: number) => Promise<{
         client: { id: number; name: string; cpf?: string; phone?: string; plan_type: string; expiry_date: string; active: number }
         payments: {
@@ -89,7 +98,62 @@ declare global {
         avulsoWhileDebtor: { id: number; placa: string; tipo: string; entrada: string; saida: string | null; valor: number }[]
         totals: { payments: number; avulsos: number }
       } | null>
-      exportFinancialCsv: () => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
+      exportFinancialCsv: (data?: { month?: number; year?: number }) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
+      getShiftOverview: () => Promise<{
+        shift: { shiftDate: string; shiftType: 'DIURNO' | 'NOTURNO'; startIso: string; endIso: string; label: string }
+        windowStartIso: string
+        alreadyClosed: boolean
+        live: {
+          totalAvulsos: number
+          countAvulsos: number
+          totalRenovacoes: number
+          countRenovacoes: number
+          total: number
+          byMethod: { method: string; avulsos: number; renovacoes: number; total: number }[]
+          cashExpected: number
+          tickets: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number | null; payment_method: string | null }[]
+          payments: { id: number; amount: number; plan_type: string; payment_date: string; payment_method: string | null; competency_month: string | null; client_name: string }[]
+        } | null
+        closures: {
+          id: number
+          shift_date: string
+          shift_type: string
+          start_iso: string
+          end_iso: string
+          total_avulsos: number
+          total_renovacoes: number
+          count_avulsos: number
+          count_renovacoes: number
+          by_method_json: string
+          cash_expected: number | null
+          cash_counted: number | null
+          cash_difference: number | null
+          operator_name: string | null
+          closed_at: string
+        }[]
+      } | null>
+      closeShift: (data: { cashCounted?: number | null; operatorName?: string }) => Promise<{
+        success: boolean
+        closure?: {
+          id: number
+          shift_date: string
+          shift_type: string
+          start_iso: string
+          end_iso: string
+          total_avulsos: number
+          total_renovacoes: number
+          count_avulsos: number
+          count_renovacoes: number
+          by_method_json: string
+          cash_expected: number | null
+          cash_counted: number | null
+          cash_difference: number | null
+          operator_name: string | null
+          closed_at: string
+        }
+        error?: string
+      }>
+      printShiftClosure: (data: unknown) => Promise<{ success: boolean; error?: string }>
       getPrinters: () => Promise<{ name: string; displayName: string }[]>
       getPrinterConfig: () => Promise<string>
       savePrinterConfig: (printerName: string) => Promise<{ success: boolean }>

@@ -101,11 +101,32 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
     setModalOpen(true)
   }
 
-  const handleCheckoutConfirm = async () => {
+  // Revalida o valor enquanto o modal está aberto: se a cota grátis vencer com
+  // o modal em tela, o valor e os botões de forma de pagamento aparecem antes
+  // do confirmar (sem isso o pagamento sairia como "Não informado").
+  useEffect(() => {
+    if (!modalOpen || !checkoutTicket) return
+    const t = setInterval(async () => {
+      try {
+        const res = await calculateValue({
+          entrada: checkoutTicket.entrada,
+          placa: checkoutTicket.placa,
+          tipo: checkoutTicket.tipo,
+          ...(checkoutTicket.cpf ? { cpf: checkoutTicket.cpf } : {})
+        })
+        setCheckoutValor(res.valor)
+      } catch {
+        // mantém o último valor conhecido
+      }
+    }, 15000)
+    return () => clearInterval(t)
+  }, [modalOpen, checkoutTicket])
+
+  const handleCheckoutConfirm = async (paymentMethod?: string) => {
     if (!checkoutTicket) return
     setCheckoutLoading(true)
     try {
-      const result = await checkoutTicketService({ id: checkoutTicket.id })
+      const result = await checkoutTicketService({ id: checkoutTicket.id, paymentMethod })
       if (result.success) {
         const valorCobrado = result.valor ?? checkoutValor
         if (valorCobrado > 0 && checkoutTicket.tipo !== 'GARAGEM') {
@@ -331,7 +352,7 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
           )}
           {subscriptionInfo?.isSubscriber && subscriptionInfo?.isExpired && (
             <div className="p-3 rounded-lg bg-amber-900/40 border border-amber-600 text-amber-200 text-sm">
-              PLANO VENCIDO EM {format(new Date(subscriptionInfo.expiryDate), 'dd/MM/yyyy')}! Cobrar como avulso?
+              PLANO VENCIDO EM {format(new Date(subscriptionInfo.expiryDate.slice(0, 10) + 'T12:00:00'), 'dd/MM/yyyy')}! Cobrar como avulso?
             </div>
           )}
           {plateWasInToday === true && (

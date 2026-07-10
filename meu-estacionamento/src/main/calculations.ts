@@ -1,6 +1,9 @@
 /**
- * Verifica se a estadia se qualifica como pernoite (18h às 08h).
- * Pernoite: entrada entre 18h e 23:59, saída entre 00h e 08h do dia seguinte.
+ * Regra LEGADA de pernoite (R$ 50 fixo), mantida por compatibilidade: só
+ * dispara para estadias ACIMA de 24 horas (diffDias >= 1) com entrada
+ * 18h–23:59 e saída 00h–08h. Decisão da gerência (10/07/2026): a categoria
+ * "pernoite" não existe mais na operação — o avulso que passa a noite
+ * (ex.: 19h→7h) paga tarifa horária normal com cota única.
  */
 export function isPernoite(entrada: string, saida: string): boolean {
   const e = new Date(entrada)
@@ -50,8 +53,15 @@ export type GetDailyUsedForDate = (dateKey: string) => number
 
 /**
  * Calcula o valor a ser cobrado baseado no tempo decorrido.
- * Cota diária: para estadias que cruzam meia-noite local, cada dia civil tem seu próprio
- * saldo de minutos grátis (e uso já registrado em daily_free_usage naquela data).
+ *
+ * Cota ÚNICA por estadia: a estadia contínua tem uma só cota de minutos
+ * grátis, descontado o que já foi usado no dia civil da ENTRADA. A meia-noite
+ * NÃO renova a cota da estadia em andamento (Fase 8, aprovada pela gerência em
+ * 09/07/2026 — antes, quem entrava às 23h ganhava nova cota à meia-noite e
+ * saía grátis até 01:30 com o pátio em vermelho). O rateio por dia civil
+ * (splitStayIntoLocalDaySegments) segue usado apenas para REGISTRAR o uso em
+ * daily_free_usage — o anti-fraude de reentrada não muda.
+ *
  * @param getDailyUsedForDate - minutos já usados na data local YYYY-MM-DD (anti-fraude)
  * @param aplicarPernoite - Se true e estadia 18h-08h, cobra R$50 fixo
  */
@@ -68,15 +78,13 @@ export function calcularValor(
     return 50
   }
 
-  const segments = splitStayIntoLocalDaySegments(entrada, saidaDate.toISOString())
-  if (segments.length === 0) return 0
+  const entradaDate = new Date(entrada)
+  const totalMinutes = Math.floor((saidaDate.getTime() - entradaDate.getTime()) / 60000)
+  if (totalMinutes <= 0) return 0
 
-  let totalBillable = 0
-  for (const seg of segments) {
-    const used = getDailyUsedForDate(seg.dateKey)
-    const effFree = Math.max(0, freeMinutes - used)
-    totalBillable += Math.max(0, seg.minutes - effFree)
-  }
+  const used = getDailyUsedForDate(localDateKeyFromDate(entradaDate))
+  const effFree = Math.max(0, freeMinutes - used)
+  const totalBillable = Math.max(0, totalMinutes - effFree)
 
   if (totalBillable <= 0) return 0
   const horasExtras = Math.ceil(totalBillable / 60)

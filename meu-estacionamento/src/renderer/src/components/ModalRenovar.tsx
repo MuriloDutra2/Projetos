@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { maskCPF, maskPhone } from '../utils/masks'
+import { maskCPF, maskPhone, maskCurrency, parseCurrencyToNumber } from '../utils/masks'
 import { friendlyError } from '../utils/errorHandler'
 
 const PLANO_NOMES: Record<string, string> = {
@@ -8,24 +8,6 @@ const PLANO_NOMES: Record<string, string> = {
   MENSAL_CARRO_MOTO: 'Mensal Carro e Moto',
   GARAGEM: 'Garagem',
   FUNCIONARIO: 'Funcionário (Livre)'
-}
-
-/** Permite apenas números e vírgula; formata como 0,00 */
-function maskCurrency(value: string): string {
-  const cleaned = value.replace(/[^\d,]/g, '')
-  const parts = cleaned.split(',')
-  if (parts.length > 2) return value
-  if (parts.length === 2 && parts[1].length > 2) {
-    parts[1] = parts[1].slice(0, 2)
-    return parts.join(',')
-  }
-  return cleaned
-}
-
-function parseCurrencyToNumber(value: string): number {
-  if (!value || !value.trim()) return 0
-  const normalized = value.trim().replace(',', '.')
-  return Math.max(0, Number(normalized) || 0)
 }
 
 interface ModalRenovarProps {
@@ -75,6 +57,9 @@ export default function ModalRenovar({
     else alert(message)
   }
 
+  const isMensal = planType.startsWith('MENSAL')
+  const monthsPaid = isMensal ? months : 1
+
   const handleConfirm = async () => {
     const amount = parseCurrencyToNumber(amountStr)
     if (amount <= 0) {
@@ -88,7 +73,7 @@ export default function ModalRenovar({
         clientId,
         planType,
         amount,
-        months: planType.startsWith('MENSAL') ? months : 1,
+        months: monthsPaid,
         paymentMethod,
         notes
       })
@@ -107,8 +92,11 @@ export default function ModalRenovar({
             },
             vehicleList: clientPlates,
             planData: {
-              planName: PLANO_NOMES[planType] ?? planType,
-              value: amount,
+              planName:
+                monthsPaid > 1
+                  ? `${PLANO_NOMES[planType] ?? planType} (${monthsPaid} meses)`
+                  : (PLANO_NOMES[planType] ?? planType),
+              value: amount * monthsPaid,
               expiryDate: result.newExpiry ?? ''
             }
           })
@@ -155,7 +143,7 @@ export default function ModalRenovar({
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">
-              Valor (R$)
+              {isMensal ? 'Valor por mês (R$)' : 'Valor (R$)'}
             </label>
             <input
               type="text"
@@ -166,7 +154,7 @@ export default function ModalRenovar({
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500"
             />
           </div>
-          {planType.startsWith('MENSAL') && (
+          {isMensal && (
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">
                 Meses para pagar
@@ -182,6 +170,23 @@ export default function ModalRenovar({
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+          {parseCurrencyToNumber(amountStr) > 0 && (
+            <div className="bg-gray-700/50 border border-gray-600 rounded-lg px-3 py-2">
+              <p className="text-sm text-gray-300">
+                Total a receber:{' '}
+                <span className="font-bold text-green-500">
+                  R$ {(parseCurrencyToNumber(amountStr) * monthsPaid).toFixed(2).replace('.', ',')}
+                </span>
+                {monthsPaid > 1 && (
+                  <span className="text-gray-400">
+                    {' '}
+                    ({monthsPaid} meses de R${' '}
+                    {parseCurrencyToNumber(amountStr).toFixed(2).replace('.', ',')})
+                  </span>
+                )}
+              </p>
             </div>
           )}
           <div>

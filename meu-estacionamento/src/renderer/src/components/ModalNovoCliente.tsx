@@ -343,6 +343,12 @@ export default function ModalNovoCliente({
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
                 required
               />
+              {clientToEdit && (
+                <p className="text-xs text-amber-400/90 mt-1">
+                  Atenção: alterar o vencimento aqui deixa o cliente &quot;Em dia&quot; até essa
+                  data, sem registrar pagamento. Para receber mensalidade, use o botão Renovar.
+                </p>
+              )}
             </div>
           )}
           <div>

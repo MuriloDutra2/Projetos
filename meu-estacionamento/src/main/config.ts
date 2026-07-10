@@ -6,6 +6,10 @@ const configPath = () => join(app.getPath('userData'), 'config.json')
 
 export interface AppConfig {
   printerName?: string
+  /** Hora local (0-23) em que começa o turno diurno do caixa. Padrão: 7. */
+  shiftDayStartHour?: number
+  /** Hora local (0-23) em que começa o turno noturno do caixa. Padrão: 19. */
+  shiftNightStartHour?: number
 }
 
 const defaults: AppConfig = {}

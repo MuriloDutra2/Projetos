@@ -27,6 +27,25 @@
 - [ ] **Assinantes:** cadastrar um assinante e um veículo; conferir se aparecem nas listagens.
 - [ ] **Impressora (se usar):** configurar a impressora nas configurações e testar impressão de um ticket ou recibo.
 
+### 3b. Financeiro (atualização jul/2026)
+- [ ] **Saída paga:** escolher cada forma de pagamento (Dinheiro, Pix, Cartão) em saídas diferentes e conferir a forma na aba Financeiro.
+- [ ] **Saída gratuita (dentro da cota):** conferir que NÃO aparece pergunta de forma de pagamento.
+- [ ] **Excluir veículo (sem cobrança):** continua funcionando com a senha.
+- [ ] **Renovação multi-meses:** renovar 3 meses e conferir o total exibido no modal, o recibo (total + meses) e "planos vendidos = 1" no Relatório do dia.
+- [ ] **Mensalista pago:** cliente com vencimento futuro mostra "Em dia" e entra no pátio como MENSALISTA (caso do vídeo de 09/07).
+- [ ] **Saída após 21h:** registrar uma saída depois das 21h e conferir que cai no dia certo no Relatório, Financeiro e Histórico.
+- [ ] **Total do mês:** conferir que o total de avulsos do Financeiro bate com a soma da tabela e com o CSV exportado.
+- [ ] **Cota à meia-noite (Fase 8):** entrada 23h e saída 01:30 deve cobrar R$ 4 (a meia-noite não renova a cota; o vermelho do pátio agora coincide com a cobrança). Pernoite (18h+ → até 8h) continua R$ 50.
+
+### 3c. Fechamento de caixa por turno (atualização jul/2026)
+- [ ] **Aba Caixa:** abrir a aba, conferir o badge do turno atual (diurno 07h–19h / noturno 19h–07h) e a contagem regressiva.
+- [ ] **Totais ao vivo:** fazer uma saída paga e uma renovação; conferir que os cards e a quebra por forma atualizam (recarrega a cada 30s).
+- [ ] **Conferência:** digitar o dinheiro contado e conferir sobra/falta contra o "dinheiro esperado".
+- [ ] **Fechar turno:** confirmar o fechamento; o comprovante deve imprimir e o turno aparecer no histórico.
+- [ ] **Fechamento duplicado:** tentar fechar de novo o mesmo turno — deve ser bloqueado ("já foi fechado").
+- [ ] **Transação após fechar:** registrar uma saída depois do fechamento e conferir que ela entra no turno seguinte (card "Desde HH:mm").
+- [ ] **Turno noturno:** fechar um turno noturno de madrugada e conferir que ele cobre desde as 19h de ontem (cruza a meia-noite inteiro).
+
 ### 4. Dados persistentes
 - [ ] Fechar o app e abrir de novo: conferir se os tickets e assinantes continuam lá.
 - [ ] (Opcional) Verificar em `%APPDATA%\KF Estacionamento\` se existem `parking.db` e `config.json`.

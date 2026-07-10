@@ -24,8 +24,10 @@ configureStableCachePaths()
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { dbOperations, translateDbError } from './db'
+import { localDateStr } from './clientStatus'
 import { calcularValor, splitStayIntoLocalDaySegments } from './calculations'
-import { printEntryTicket, printExitTicket, printSubscriptionReceipt } from './printer'
+import { printEntryTicket, printExitTicket, printSubscriptionReceipt, printShiftClosureReceipt, type ShiftClosureReceiptData } from './printer'
+import { currentShift, shiftLabel } from './shifts'
 import { getConfig, saveConfig } from './config'
 import { startSyncServer, stopSyncServer, getSyncServerInfo } from './syncServer'
 
@@ -107,7 +109,12 @@ app.whenReady().then(() => {
   ipcMain.handle('create-ticket', (_event, { placa, tipo, cpf }: { placa: string; tipo: string; cpf?: string }) => {
     try {
       const placaNorm = normalizePlate(placa)
-      if (!placaNorm) return { success: false, error: 'Placa inválida' }
+      // Validação esperada vai em `message` (exibida limpa, título "Atenção"),
+      // não em `error` (que o renderer trata como falha inesperada).
+      if (!placaNorm) return { success: false, message: 'Placa inválida.' }
+      if (placaNorm.length < 7) {
+        return { success: false, message: 'Placa incompleta. Digite os 7 caracteres da placa.' }
+      }
       if (dbOperations.hasActiveTicket(placaNorm)) {
         return { success: false, message: 'Veículo já está no pátio!' }
       }
@@ -144,7 +151,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     'checkout-ticket',
-    (_event, { id }: { id: number }) => {
+    (_event, { id, paymentMethod }: { id: number; paymentMethod?: string }) => {
       try {
         const tickets = dbOperations.getAllActiveTickets()
         const ticket = tickets.find((t: any) => t.id === id)
@@ -169,7 +176,7 @@ app.whenReady().then(() => {
           aplicarPernoite
         )
 
-        dbOperations.checkoutTicket(id, valor, saida)
+        dbOperations.checkoutTicket(id, valor, saida, paymentMethod)
 
         if (usaControleDiario(ticket.tipo) && freeMinutes < 999999) {
           const segs = splitStayIntoLocalDaySegments(ticket.entrada, saida)
@@ -222,7 +229,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('check-plate-was-in-today', (_event, placa: string) => {
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      const today = localDateStr(new Date())
       return dbOperations.getPlateWasInToday(normalizePlate(placa), today)
     } catch (error) {
       console.error('Erro ao verificar placa no dia:', error)
@@ -394,6 +401,72 @@ app.whenReady().then(() => {
     }
   )
 
+  ipcMain.handle('get-finance-month-data', (_event, data: { month: number; year: number }) => {
+    try {
+      return dbOperations.getFinanceMonthData(data.month, data.year)
+    } catch (error) {
+      console.error('Erro ao buscar dados financeiros do mês:', error)
+      return {
+        totalAvulsos: 0,
+        countAvulsos: 0,
+        totalRenovacoes: 0,
+        countRenovacoes: 0,
+        byMethod: [],
+        tickets: [],
+        payments: []
+      }
+    }
+  })
+
+  // ── Fechamento de caixa por turno ──────────────────────────────────────
+
+  ipcMain.handle('get-shift-overview', () => {
+    try {
+      const cfg = getConfig()
+      const dayStart = cfg.shiftDayStartHour ?? 7
+      const nightStart = cfg.shiftNightStartHour ?? 19
+      const shift = currentShift(new Date(), dayStart, nightStart)
+      return {
+        shift: { ...shift, label: shiftLabel(shift.shiftType, dayStart, nightStart) },
+        ...dbOperations.getShiftOverview(shift)
+      }
+    } catch (error) {
+      console.error('Erro ao buscar visão do turno:', error)
+      return null
+    }
+  })
+
+  ipcMain.handle(
+    'close-shift',
+    (_event, data: { cashCounted?: number | null; operatorName?: string }) => {
+      try {
+        const cfg = getConfig()
+        const shift = currentShift(
+          new Date(),
+          cfg.shiftDayStartHour ?? 7,
+          cfg.shiftNightStartHour ?? 19
+        )
+        return dbOperations.closeShift(shift, {
+          cashCounted: data?.cashCounted ?? null,
+          operatorName: data?.operatorName
+        })
+      } catch (error) {
+        console.error('Erro ao fechar turno:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  ipcMain.handle('print-shift-closure', async (_event, data: ShiftClosureReceiptData) => {
+    try {
+      await printShiftClosureReceipt(data)
+      return { success: true }
+    } catch (error) {
+      console.error('Erro ao imprimir fechamento:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle('get-client-statement', (_event, clientId: number) => {
     try {
       return dbOperations.getClientStatement(clientId)
@@ -403,24 +476,29 @@ app.whenReady().then(() => {
     }
   })
 
-  ipcMain.handle('export-financial-csv', async () => {
+  ipcMain.handle('export-financial-csv', async (_event, data?: { month?: number; year?: number }) => {
     try {
-      const tickets = dbOperations.getAllFinishedTicketsForFinance() as any[]
-      const payments = dbOperations.getFinancialHistory() as any[]
+      // Com mês/ano exporta o mês local completo; sem filtro, todo o histórico (sem LIMIT).
+      const monthData =
+        data?.month && data?.year
+          ? dbOperations.getFinanceMonthData(data.month, data.year)
+          : dbOperations.getFinanceDataForRange()
       const rows: { date: string; type: string; description: string; value: number }[] = []
-      tickets.forEach((t) => {
+      // Mesmo formato de descrição do renderer (utils/transactions.ts) — a
+      // transação deve ler igual no Financeiro, no Fechamento e no CSV.
+      monthData.tickets.forEach((t) => {
         rows.push({
           date: t.saida ?? t.entrada,
           type: 'Avulso',
-          description: `Ticket ${t.placa}`,
+          description: `Ticket ${t.placa}${t.payment_method ? ` (${t.payment_method})` : ''}`,
           value: t.valor ?? 0
         })
       })
-      payments.forEach((p) => {
+      monthData.payments.forEach((p) => {
         rows.push({
           date: p.payment_date,
           type: 'Renovação',
-          description: `${p.client_name ?? ''}${p.payment_method ? ` - ${p.payment_method}` : ''}${p.competency_month ? ` - Comp ${p.competency_month}` : ''}`,
+          description: `${p.client_name ?? ''}${p.payment_method ? ` (${p.payment_method})` : ''}${p.competency_month ? ` - comp. ${p.competency_month}` : ''}`,
           value: p.amount ?? 0
         })
       })
@@ -431,9 +509,13 @@ app.whenReady().then(() => {
           `${new Date(r.date).toLocaleString('pt-BR')};${r.type};"${(r.description ?? '').replace(/"/g, '""')}";${(r.value ?? 0).toFixed(2).replace('.', ',')}`
       )
       const csv = [header, ...lines].join('\n')
+      const suffix =
+        data?.month && data?.year
+          ? `${data.year}-${String(data.month).padStart(2, '0')}`
+          : 'completo'
       const { canceled, filePath } = await dialog.showSaveDialog({
         title: 'Exportar CSV',
-        defaultPath: `financeiro-${new Date().toISOString().slice(0, 10)}.csv`,
+        defaultPath: `financeiro-${suffix}.csv`,
         filters: [{ name: 'CSV', extensions: ['csv'] }]
       })
       if (canceled || !filePath) return { success: false, canceled: true }

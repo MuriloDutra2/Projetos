@@ -32,7 +32,8 @@ const api = {
   }) => ipcRenderer.invoke('export-daily-report-pdf', data),
   createTicket: (data: { placa: string; tipo: string; cpf?: string }) =>
     ipcRenderer.invoke('create-ticket', data),
-  checkoutTicket: (data: { id: number }) => ipcRenderer.invoke('checkout-ticket', data),
+  checkoutTicket: (data: { id: number; paymentMethod?: string }) =>
+    ipcRenderer.invoke('checkout-ticket', data),
   calculateValue: (data: {
     entrada: string
     placa?: string
@@ -76,8 +77,11 @@ const api = {
   getFinancialHistory: () => ipcRenderer.invoke('get-financial-history'),
   getFinancialSummaryByMethod: (data: { month: number; year: number }) =>
     ipcRenderer.invoke('get-financial-summary-by-method', data),
+  getFinanceMonthData: (data: { month: number; year: number }) =>
+    ipcRenderer.invoke('get-finance-month-data', data),
   getClientStatement: (clientId: number) => ipcRenderer.invoke('get-client-statement', clientId),
-  exportFinancialCsv: () => ipcRenderer.invoke('export-financial-csv'),
+  exportFinancialCsv: (data?: { month?: number; year?: number }) =>
+    ipcRenderer.invoke('export-financial-csv', data),
   getPrinters: () => ipcRenderer.invoke('get-printers'),
   getPrinterConfig: () => ipcRenderer.invoke('get-printer-config'),
   savePrinterConfig: (printerName: string) =>
@@ -104,6 +108,12 @@ const api = {
     ipcRenderer.invoke('update-family-member', { memberId, name, cpf }),
   deleteFamilyMember: (memberId: number) => ipcRenderer.invoke('delete-family-member', memberId),
   deleteFamilyGroup: (groupId: number) => ipcRenderer.invoke('delete-family-group', groupId),
+
+  // ── Fechamento de caixa por turno ──
+  getShiftOverview: () => ipcRenderer.invoke('get-shift-overview'),
+  closeShift: (data: { cashCounted?: number | null; operatorName?: string }) =>
+    ipcRenderer.invoke('close-shift', data),
+  printShiftClosure: (data: unknown) => ipcRenderer.invoke('print-shift-closure', data),
 
   // ── Sync LAN ──
   syncStartServer: () => ipcRenderer.invoke('sync-start-server'),
