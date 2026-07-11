@@ -62,7 +62,6 @@ export interface ShiftOverview {
     label: string
   }
   windowStartIso: string
-  alreadyClosed: boolean
   live: ShiftLiveData | null
   closures: ShiftClosure[]
 }

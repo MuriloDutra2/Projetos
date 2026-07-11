@@ -282,7 +282,7 @@ export async function printShiftClosureReceipt(data: ShiftClosureReceiptData): P
     ...getHeaderItems('KF ESTACIONAMENTO'),
     {
       type: 'text',
-      value: 'FECHAMENTO DE TURNO',
+      value: 'FECHAMENTO DE CAIXA',
       style: { textAlign: 'center', marginTop: '8px', fontSize: '12px', fontWeight: '700', ...safeTextStyle }
     },
     line(data.shiftLabel, { marginTop: '8px' }),
