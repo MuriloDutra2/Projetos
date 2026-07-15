@@ -99,3 +99,24 @@ export function minutosDaEstadia(entrada: string, saida: string): number {
   const s = new Date(saida)
   return Math.floor((s.getTime() - e.getTime()) / (1000 * 60))
 }
+
+/**
+ * Minutos GRÁTIS consumidos pela estadia — é isso que vai para o
+ * daily_free_usage, atribuído ao dia civil da ENTRADA.
+ *
+ * Minutos pagos NÃO consomem cota: registrá-los criava a "cota fantasma"
+ * (Fase 9, vídeos de 15/07/2026) — o cliente da madrugada pagava o excedente
+ * na noite 1 e os mesmos minutos voltavam como cota consumida do dia
+ * seguinte, cobrando R$ 8 de quem ficava 1h25 na noite 2.
+ */
+export function minutosGratisConsumidos(
+  entrada: string,
+  saida: string,
+  freeMinutes: number,
+  usedAtEntryDay: number
+): number {
+  const stay = minutosDaEstadia(entrada, saida)
+  if (stay <= 0) return 0
+  const effFree = Math.max(0, freeMinutes - usedAtEntryDay)
+  return Math.min(stay, effFree)
+}

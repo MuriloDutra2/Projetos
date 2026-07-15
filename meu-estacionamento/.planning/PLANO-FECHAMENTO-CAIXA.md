@@ -324,6 +324,7 @@ puro + cenário do vídeo completo (noite 1 paga, noite 2 grátis) + regressão 
 | 7 | Turnos | `feat(caixa): fechamento por turno de 12h` ✅ | UAT fechamento diurno + noturno |
 
 | 8 | Cota única por estadia | `fix(cobranca): meia-noite não renova cota da estadia` ✅ (aprovada pela gerência em 09/07/2026) | UAT 23h→01:30 = R$ 4 |
+| 9 | Cota fantasma | `fix(cobranca): registrar só minutos grátis, no dia da entrada` ✅ | QA cenário 2 noites + regressão pátio |
 
 Detalhe de implementação da Fase 7 (corrente de fechamentos): o intervalo real coberto por
 cada fechamento vai do **fim do fechamento anterior** (ou do início natural do turno, no
