@@ -277,6 +277,38 @@ Confirmar os dois exemplos acima com a gerência antes de executar.
   a usar a mesma régua contínua).
 - Commit isolado e reversível; rodar a rede de regressão completa do pátio.
 
+## Validação de campo 3 — vídeos de 15/07/2026 (pós-deploy da 1.1.0)
+
+**Situação E — "cota fantasma": cliente da madrugada cobrado sem estourar a cota (→ Fase 9).**
+Carro FWJ3F38, entrada 23:37, 1h25 no pátio (tempo em VERDE) e a saída cobrando R$ 8.
+Relato: "os que passam do tempo pagam na hora e depois cobram DE NOVO" — moto + 2 carros.
+
+**Causa (reproduzida exatamente):** o checkout registra em `daily_free_usage` TODOS os
+minutos da estadia, rateados por dia civil — inclusive os minutos PAGOS, e jogando a parte
+pós-meia-noite no dia seguinte (`index.ts` ~181). Cliente que dorme fora do horário:
+- Noite 1: entra 23:37, sai 02:10 (153 min) → paga R$ 8 (correto). Registro: dia 1 +23 min,
+  **dia 2 +130 min** ← minutos pagos viram "cota consumida" do dia 2.
+- Noite 2 (mesmo dia 2): entra 23:37, sai 01:02 (85 min) → uso do dia de entrada = 130 ≥ 90
+  → cota efetiva 0 → 85 min cobráveis → **R$ 8** para quem não passou de 1h25. ✗
+O bug de registro é anterior à 1.1.0 (cobrava R$ 4 indevidos no mesmo cenário); a Fase 8
+o amplificou (a cota do dia da ENTRADA passou a reger a estadia inteira) → R$ 8 e visível.
+
+### Fase 9 — Registrar só os minutos GRÁTIS consumidos, no dia da entrada
+
+**Regra:** ao fechar o ticket, registrar em `daily_free_usage` apenas
+`min(minutosDaEstadia, max(0, cota − usoJáRegistradoNoDiaDaEntrada))`, atribuído ao DIA DA
+ENTRADA. Minutos pagos não consomem cota (foram pagos); a parte pós-meia-noite não penaliza
+o dia seguinte. Substitui o rateio por segmentos no checkout (`splitStayIntoLocalDaySegments`
+sai do handler; a função permanece no motor).
+
+**Efeitos:** noite 2 do caso real → R$ 0 ✓; anti-fraude do mesmo dia preservado (2ª visita
+no dia desconta o grátis já usado); quem paga a noite inteira ganha cota nova de manhã
+(justo — pagou o excedente). Dados fantasmas já gravados hoje se auto-curam no dia seguinte
+(sem limpeza retroativa — não dá para distinguir minutos pagos nos registros antigos).
+
+**Gate:** mexe no fluxo de checkout (registro pós-cobrança) — testes unitários do helper
+puro + cenário do vídeo completo (noite 1 paga, noite 2 grátis) + regressão do pátio.
+
 ---
 
 ## Ordem, commits e critério de "pronto"
