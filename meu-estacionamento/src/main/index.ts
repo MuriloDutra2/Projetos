@@ -25,7 +25,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { dbOperations, translateDbError } from './db'
 import { localDateStr } from './clientStatus'
-import { calcularValor, splitStayIntoLocalDaySegments } from './calculations'
+import { calcularValor, minutosGratisConsumidos, localDateKeyFromDate } from './calculations'
 import { printEntryTicket, printExitTicket, printSubscriptionReceipt, printShiftClosureReceipt, type ShiftClosureReceiptData } from './printer'
 import { currentShift, shiftLabel } from './shifts'
 import { getConfig, saveConfig } from './config'
@@ -179,9 +179,17 @@ app.whenReady().then(() => {
         dbOperations.checkoutTicket(id, valor, saida, paymentMethod)
 
         if (usaControleDiario(ticket.tipo) && freeMinutes < 999999) {
-          const segs = splitStayIntoLocalDaySegments(ticket.entrada, saida)
-          for (const seg of segs) {
-            dbOperations.addDailyUsedMinutes(usageKey, seg.dateKey, seg.minutes)
+          // Registra só os minutos GRÁTIS consumidos, no dia da ENTRADA.
+          // Minutos pagos não consomem cota (Fase 9 — "cota fantasma").
+          const entryDayKey = localDateKeyFromDate(new Date(ticket.entrada))
+          const gratis = minutosGratisConsumidos(
+            ticket.entrada,
+            saida,
+            freeMinutes,
+            getDailyForDate(entryDayKey)
+          )
+          if (gratis > 0) {
+            dbOperations.addDailyUsedMinutes(usageKey, entryDayKey, gratis)
           }
         }
 

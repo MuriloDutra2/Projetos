@@ -36,6 +36,7 @@
 - [ ] **Saída após 21h:** registrar uma saída depois das 21h e conferir que cai no dia certo no Relatório, Financeiro e Histórico.
 - [ ] **Total do mês:** conferir que o total de avulsos do Financeiro bate com a soma da tabela e com o CSV exportado.
 - [ ] **Cota à meia-noite (Fase 8):** entrada 23h e saída 01:30 deve cobrar R$ 4 (a meia-noite não renova a cota; o vermelho do pátio agora coincide com a cobrança). Pernoite (18h+ → até 8h) continua R$ 50.
+- [ ] **Cliente da madrugada (Fase 9 — caso dos vídeos de 15/07):** noite 1 passa da cota e paga o excedente; na noite 2, o MESMO veículo entra ~23h30 e fica menos de 1h30 → deve sair por R$ 0 (os minutos pagos da véspera não podem virar "cota consumida" do dia seguinte).
 
 ### 3c. Fechamento de caixa (atualização jul/2026)
 - [ ] **Aba Caixa:** abrir a aba, conferir o aviso "Caixa aberto desde HH:mm", o badge do turno (diurno 07h–19h / noturno 19h–07h) e a contagem regressiva.

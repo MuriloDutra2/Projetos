@@ -3,6 +3,7 @@ import {
   calcularValor,
   isPernoite,
   minutosDaEstadia,
+  minutosGratisConsumidos,
   splitStayIntoLocalDaySegments,
   localDateKeyFromDate
 } from '../../src/main/calculations'
@@ -265,6 +266,71 @@ describe('minutosDaEstadia', () => {
   it('3.3 0 min', () => {
     const e = hoje(10, 0)
     expect(minutosDaEstadia(e, e)).toBe(0)
+  })
+})
+
+describe('Fase 9 — cota fantasma (registro só dos minutos grátis, no dia da entrada)', () => {
+  it('helper: dentro da cota registra a estadia inteira', () => {
+    expect(minutosGratisConsumidos(dia('2026-07-14', 10, 0), dia('2026-07-14', 11, 0), 90, 0)).toBe(60)
+  })
+
+  it('helper: estadia acima da cota registra SÓ a cota (minutos pagos não consomem)', () => {
+    // 153 min de estadia, cota 90 → registra 90; os 63 pagos ficam de fora
+    expect(minutosGratisConsumidos(dia('2026-07-14', 23, 37), dia('2026-07-15', 2, 10), 90, 0)).toBe(90)
+  })
+
+  it('helper: cota já consumida no dia → registra 0', () => {
+    expect(minutosGratisConsumidos(dia('2026-07-14', 10, 0), dia('2026-07-14', 11, 0), 90, 90)).toBe(0)
+    expect(minutosGratisConsumidos(dia('2026-07-14', 10, 0), dia('2026-07-14', 11, 0), 90, 130)).toBe(0)
+  })
+
+  it('helper: estadia zero ou negativa → 0', () => {
+    const e = dia('2026-07-14', 10, 0)
+    expect(minutosGratisConsumidos(e, e, 90, 0)).toBe(0)
+  })
+
+  it('cenário do vídeo (15/07/2026): noite 1 paga o excedente, noite 2 dentro da cota sai grátis', () => {
+    // Simula o daily_free_usage entre os checkouts, como o handler faz agora
+    const uso: Record<string, number> = {}
+    const getUso: GetDailyUsedForDate = (key) => uso[key] ?? 0
+    const registra = (entrada: string, saida: string): void => {
+      const entryDay = localDateKeyFromDate(new Date(entrada))
+      const g = minutosGratisConsumidos(entrada, saida, 90, getUso(entryDay))
+      if (g > 0) uso[entryDay] = (uso[entryDay] ?? 0) + g
+    }
+
+    // Noite 1: entra 23:37 (dia 14), sai 02:10 (dia 15) = 153 min → 63 excedentes → R$ 8 (pago)
+    const e1 = dia('2026-07-14', 23, 37)
+    const s1 = dia('2026-07-15', 2, 10)
+    expect(calcularValor(e1, 90, s1, getUso, false)).toBe(8)
+    registra(e1, s1)
+    // Registro vai TODO para o dia 14; o dia 15 fica limpo (antes recebia +130 fantasmas)
+    expect(uso['2026-07-14']).toBe(90)
+    expect(uso['2026-07-15']).toBeUndefined()
+
+    // Noite 2: entra 23:37 (dia 15), sai 01:02 (dia 16) = 85 min, dentro da cota → R$ 0
+    // (na regra antiga de registro, cobrava R$ 8 — o bug do vídeo)
+    const e2 = dia('2026-07-15', 23, 37)
+    const s2 = dia('2026-07-16', 1, 2)
+    expect(calcularValor(e2, 90, s2, getUso, false)).toBe(0)
+    registra(e2, s2)
+    expect(uso['2026-07-15']).toBe(85)
+  })
+
+  it('anti-fraude do mesmo dia preservado: 2ª visita desconta o grátis já usado', () => {
+    const uso: Record<string, number> = {}
+    const getUso: GetDailyUsedForDate = (key) => uso[key] ?? 0
+    // Visita 1: 60 min de manhã → grátis, registra 60
+    const e1 = dia('2026-07-14', 10, 0)
+    const s1 = dia('2026-07-14', 11, 0)
+    expect(calcularValor(e1, 90, s1, getUso, false)).toBe(0)
+    uso['2026-07-14'] = minutosGratisConsumidos(e1, s1, 90, 0)
+    // Visita 2 no mesmo dia: 50 min, restam só 30 de cota → 20 min cobráveis → R$ 4
+    const e2 = dia('2026-07-14', 15, 0)
+    const s2 = dia('2026-07-14', 15, 50)
+    expect(calcularValor(e2, 90, s2, getUso, false)).toBe(4)
+    // E registra só os 30 grátis restantes
+    expect(minutosGratisConsumidos(e2, s2, 90, uso['2026-07-14'])).toBe(30)
   })
 })
 
