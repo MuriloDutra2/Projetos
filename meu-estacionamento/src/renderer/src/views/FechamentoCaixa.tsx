@@ -3,6 +3,7 @@ import { format } from 'date-fns'
 import { clsx } from 'clsx'
 import {
   getShiftOverview,
+  getShiftClosures,
   closeShift,
   confirmShiftClosure,
   printShiftClosure,
@@ -49,6 +50,41 @@ export default function FechamentoCaixa(): React.JSX.Element {
   const [confirmOperator, setConfirmOperator] = useState('')
   const [confirmCashStr, setConfirmCashStr] = useState('')
   const [confirming, setConfirming] = useState(false)
+  // Histórico restrito ao gerente: a lista só chega do main após a senha.
+  const [managerPassword, setManagerPassword] = useState<string | null>(null)
+  const [passwordInput, setPasswordInput] = useState('')
+  const [closures, setClosures] = useState<ShiftClosure[] | null>(null)
+  const [unlocking, setUnlocking] = useState(false)
+
+  const handleUnlockHistory = async (): Promise<void> => {
+    if (!passwordInput.trim()) return
+    setUnlocking(true)
+    try {
+      const res = await getShiftClosures({ password: passwordInput })
+      if (res.success && res.closures) {
+        setManagerPassword(passwordInput)
+        setClosures(res.closures)
+        setPasswordInput('')
+      } else {
+        showAlert('Acesso negado', friendlyError(res.error ?? 'Senha incorreta.'), 'error')
+      }
+    } catch (err) {
+      console.error(err)
+      showAlert('Erro', friendlyError(err), 'error')
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
+  const refreshClosures = async (): Promise<void> => {
+    if (!managerPassword) return
+    try {
+      const res = await getShiftClosures({ password: managerPassword })
+      if (res.success && res.closures) setClosures(res.closures)
+    } catch (err) {
+      console.error(err)
+    }
+  }
 
   const handleConfirmClosure = async (): Promise<void> => {
     if (!confirmTarget) return
@@ -61,13 +97,15 @@ export default function FechamentoCaixa(): React.JSX.Element {
       const res = await confirmShiftClosure({
         id: confirmTarget.id,
         operatorName: confirmOperator.trim(),
-        cashCounted: confirmCashStr.trim() ? parseCurrencyToNumber(confirmCashStr) : null
+        cashCounted: confirmCashStr.trim() ? parseCurrencyToNumber(confirmCashStr) : null,
+        password: managerPassword ?? ''
       })
       if (res.success) {
         setConfirmTarget(null)
         setConfirmOperator('')
         setConfirmCashStr('')
         reload()
+        void refreshClosures()
         showAlert('Caixa confirmado', 'Fechamento automático confirmado com sucesso.', 'success')
       } else {
         showAlert('Erro', friendlyError(res.error ?? 'Erro ao confirmar'), 'error')
@@ -94,7 +132,7 @@ export default function FechamentoCaixa(): React.JSX.Element {
   }, [reload])
 
   const live = overview?.live ?? null
-  const lastClosure = overview?.closures?.[0] ?? null
+  const lastClosure = closures?.[0] ?? null
 
   const countdown = useMemo(() => {
     if (!overview) return ''
@@ -199,9 +237,8 @@ export default function FechamentoCaixa(): React.JSX.Element {
       <div className="bg-emerald-900/25 border border-emerald-700/40 rounded-lg px-4 py-2 mb-4">
         <p className="text-sm text-emerald-300">
           <span className="font-medium">Caixa aberto</span> desde{' '}
-          {format(new Date(overview.windowStartIso), 'dd/MM HH:mm')}
-          {lastClosure ? ' (após o último fechamento)' : ''}. Você pode fechar e abrir um caixa novo
-          a qualquer momento, sem esperar a troca de turno.
+          {format(new Date(overview.windowStartIso), 'dd/MM HH:mm')}. Você pode fechar e abrir um
+          caixa novo a qualquer momento, sem esperar a troca de turno.
         </p>
       </div>
 
@@ -361,8 +398,11 @@ export default function FechamentoCaixa(): React.JSX.Element {
       </div>
 
       <div className="flex items-center justify-between mb-2">
-        <p className="text-sm font-semibold text-gray-300">Fechamentos anteriores</p>
-        {lastClosure && (
+        <p className="text-sm font-semibold text-gray-300">
+          Fechamentos anteriores{' '}
+          <span className="text-xs font-normal text-gray-500">(acesso restrito ao gerente)</span>
+        </p>
+        {closures && lastClosure && (
           <button
             type="button"
             onClick={async () => {
@@ -376,81 +416,136 @@ export default function FechamentoCaixa(): React.JSX.Element {
           </button>
         )}
       </div>
-      <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <tbody>
-              {overview.closures.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-8 text-center text-gray-500">
-                    Nenhum fechamento registrado ainda
-                  </td>
-                </tr>
-              ) : (
-                overview.closures.map((c) => {
-                  const pendente = c.auto_closed === 1 && !c.confirmed_at
-                  return (
-                    <tr
-                      key={c.id}
-                      className={clsx(
-                        'border-b border-gray-700/50',
-                        pendente
-                          ? 'bg-red-900/40 hover:bg-red-900/50 border-l-4 border-l-red-500'
-                          : 'hover:bg-gray-700/30'
-                      )}
-                    >
-                      <td className="px-4 py-3 text-gray-300 text-sm whitespace-nowrap">
-                        {c.shift_type === 'DIURNO' ? '☀' : '☾'}{' '}
-                        {format(new Date(c.start_iso), 'dd/MM')} · {closurePeriodLabel(c).slice(6)}
-                      </td>
-                      <td className="px-4 py-3 text-white font-medium text-sm whitespace-nowrap">
-                        {money(c.total_avulsos + c.total_renovacoes)}
-                      </td>
-                      <td className="px-4 py-3 text-sm whitespace-nowrap">
-                        {c.cash_difference == null ? (
-                          <span className="text-gray-500">Sem conferência</span>
-                        ) : c.cash_difference === 0 ? (
-                          <span className="text-green-400">Confere</span>
-                        ) : c.cash_difference > 0 ? (
-                          <span className="text-amber-400">Sobra {money(c.cash_difference)}</span>
-                        ) : (
-                          <span className="text-red-400">
-                            Falta {money(Math.abs(c.cash_difference))}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-sm whitespace-nowrap">
-                        {pendente ? (
-                          <span className="inline-flex items-center gap-2">
-                            <span className="px-2 py-1 rounded text-xs font-medium bg-red-900/70 text-red-200 border border-red-600">
-                              Fechado automaticamente pelo sistema — confirmar
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmTarget(c)}
-                              className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-semibold text-white"
-                            >
-                              Confirmar caixa
-                            </button>
-                          </span>
-                        ) : c.auto_closed === 1 ? (
-                          <span className="px-2 py-1 rounded text-xs font-medium bg-amber-900/60 text-amber-300">
-                            Automático · confirmado{c.confirmed_by ? ` por ${c.confirmed_by}` : ''}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 rounded text-xs font-medium bg-green-900/60 text-green-300">
-                            Fechado{c.operator_name ? ` · ${c.operator_name}` : ''}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })
+      {!closures ? (
+        <div className="bg-gray-800 border border-gray-700 rounded-lg p-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <svg
+              className="w-6 h-6 text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
+            </svg>
+            <div className="flex-1 min-w-[200px]">
+              <p className="text-sm text-gray-300">
+                Os fechamentos ficam guardados e só o gerente pode acessá-los.
+              </p>
+              {overview.pendingCount > 0 && (
+                <p className="text-sm text-red-400 font-medium mt-1">
+                  {overview.pendingCount} fechamento{overview.pendingCount > 1 ? 's' : ''}{' '}
+                  automático{overview.pendingCount > 1 ? 's' : ''} aguardando confirmação do
+                  gerente.
+                </p>
               )}
-            </tbody>
-          </table>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleUnlockHistory()
+                }}
+                placeholder="Senha do gerente"
+                maxLength={10}
+                className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 w-44"
+              />
+              <button
+                type="button"
+                onClick={handleUnlockHistory}
+                disabled={unlocking || !passwordInput.trim()}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg text-sm font-semibold text-white"
+              >
+                {unlocking ? 'Verificando...' : 'Acessar'}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <tbody>
+                {closures.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-8 text-center text-gray-500">
+                      Nenhum fechamento registrado ainda
+                    </td>
+                  </tr>
+                ) : (
+                  closures.map((c) => {
+                    const pendente = c.auto_closed === 1 && !c.confirmed_at
+                    return (
+                      <tr
+                        key={c.id}
+                        className={clsx(
+                          'border-b border-gray-700/50',
+                          pendente
+                            ? 'bg-red-900/40 hover:bg-red-900/50 border-l-4 border-l-red-500'
+                            : 'hover:bg-gray-700/30'
+                        )}
+                      >
+                        <td className="px-4 py-3 text-gray-300 text-sm whitespace-nowrap">
+                          {c.shift_type === 'DIURNO' ? '☀' : '☾'}{' '}
+                          {format(new Date(c.start_iso), 'dd/MM')} ·{' '}
+                          {closurePeriodLabel(c).slice(6)}
+                        </td>
+                        <td className="px-4 py-3 text-white font-medium text-sm whitespace-nowrap">
+                          {money(c.total_avulsos + c.total_renovacoes)}
+                        </td>
+                        <td className="px-4 py-3 text-sm whitespace-nowrap">
+                          {c.cash_difference == null ? (
+                            <span className="text-gray-500">Sem conferência</span>
+                          ) : c.cash_difference === 0 ? (
+                            <span className="text-green-400">Confere</span>
+                          ) : c.cash_difference > 0 ? (
+                            <span className="text-amber-400">Sobra {money(c.cash_difference)}</span>
+                          ) : (
+                            <span className="text-red-400">
+                              Falta {money(Math.abs(c.cash_difference))}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm whitespace-nowrap">
+                          {pendente ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span className="px-2 py-1 rounded text-xs font-medium bg-red-900/70 text-red-200 border border-red-600">
+                                Fechado automaticamente pelo sistema — confirmar
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmTarget(c)}
+                                className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-xs font-semibold text-white"
+                              >
+                                Confirmar caixa
+                              </button>
+                            </span>
+                          ) : c.auto_closed === 1 ? (
+                            <span className="px-2 py-1 rounded text-xs font-medium bg-amber-900/60 text-amber-300">
+                              Automático · confirmado
+                              {c.confirmed_by ? ` por ${c.confirmed_by}` : ''}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 rounded text-xs font-medium bg-green-900/60 text-green-300">
+                              Fechado{c.operator_name ? ` · ${c.operator_name}` : ''}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {confirmTarget && (
         <div

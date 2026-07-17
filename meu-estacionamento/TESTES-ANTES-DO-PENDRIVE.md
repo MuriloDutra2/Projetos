@@ -51,6 +51,8 @@
 - [ ] **Fechamento automático (Fase 10):** deixar o caixa aberto na virada do turno (07h/19h) com o app aberto → o sistema fecha sozinho; a linha aparece VERMELHA no histórico com "Fechado automaticamente pelo sistema — confirmar".
 - [ ] **Confirmar caixa automático:** clicar em "Confirmar caixa" na linha vermelha → operador obrigatório, dinheiro contado opcional; após confirmar, a linha sai do vermelho e mostra "Automático · confirmado por X".
 - [ ] **Catch-up:** fechar o app antes da virada e reabrir depois → o fechamento automático da virada perdida é criado no startup, com o corte na hora exata da virada.
+- [ ] **Histórico restrito ao gerente:** a seção "Fechamentos anteriores" aparece BLOQUEADA (cadeado + campo de senha); senha errada é recusada; a senha de excluir veículos (161021) libera a lista. Sair da aba e voltar → bloqueia de novo.
+- [ ] **Aviso de pendência sem expor dados:** com um fechamento automático pendente, a área bloqueada mostra "N fechamento(s) automático(s) aguardando confirmação do gerente" SEM mostrar valores; a confirmação só funciona com o histórico desbloqueado.
 
 ### 4. Dados persistentes
 - [ ] Fechar o app e abrir de novo: conferir se os tickets e assinantes continuam lá.

@@ -113,7 +113,12 @@ declare global {
           tickets: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number | null; payment_method: string | null }[]
           payments: { id: number; amount: number; plan_type: string; payment_date: string; payment_method: string | null; competency_month: string | null; client_name: string }[]
         } | null
-        closures: {
+        pendingCount: number
+      } | null>
+      getShiftClosures: (data: { password: string }) => Promise<{
+        success: boolean
+        error?: string
+        closures?: {
           id: number
           shift_date: string
           shift_type: string
@@ -133,8 +138,8 @@ declare global {
           confirmed_by: string | null
           confirmed_at: string | null
         }[]
-      } | null>
-      confirmShiftClosure: (data: { id: number; operatorName: string; cashCounted?: number | null }) => Promise<{ success: boolean; error?: string }>
+      }>
+      confirmShiftClosure: (data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => Promise<{ success: boolean; error?: string }>
       closeShift: (data: { cashCounted?: number | null; operatorName?: string }) => Promise<{
         success: boolean
         closure?: {

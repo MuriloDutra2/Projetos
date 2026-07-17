@@ -326,6 +326,14 @@ puro + cenário do vídeo completo (noite 1 paga, noite 2 grátis) + regressão 
 | 8 | Cota única por estadia | `fix(cobranca): meia-noite não renova cota da estadia` ✅ (aprovada pela gerência em 09/07/2026) | UAT 23h→01:30 = R$ 4 |
 | 9 | Cota fantasma | `fix(cobranca): registrar só minutos grátis, no dia da entrada` ✅ | QA cenário 2 noites + regressão pátio |
 | 10 | Fechamento automático | `feat(caixa): fecha sozinho na virada; linha vermelha até confirmar` ✅ | QA virada + catch-up + confirmação |
+| 11 | Histórico restrito | `feat(caixa): fechamentos guardados sob senha do gerente` ✅ | QA senha + pendência sem expor dados |
+
+Fase 11: os fechamentos ficam guardados sob a senha do gerente (a mesma de excluir
+veículos — constante unificada no main). A lista NÃO sai do processo main sem a senha
+(get-shift-closures valida no servidor; o overview expõe apenas a contagem de automáticos
+pendentes). A confirmação de fechamento automático também exige a senha. Desbloqueio vale
+enquanto a aba estiver aberta; sair da aba bloqueia de novo. Fechar o caixa e imprimir o
+próprio comprovante na hora seguem livres para o operador — restrito é o ACERVO.
 
 Fase 10 (pedido do operador, áudio de 16/07): o caixa fecha AUTOMATICAMENTE na troca de
 turno (07:00/19:00) — no minuto da virada com o app aberto, ou em catch-up no startup, com

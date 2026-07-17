@@ -465,10 +465,28 @@ app.whenReady().then(() => {
     }
   )
 
+  // Histórico de fechamentos: área restrita do gerente. A lista só sai do
+  // processo main mediante a senha (a mesma de excluir veículos) — não é
+  // apenas um bloqueio visual no renderer.
+  ipcMain.handle('get-shift-closures', (_event, data: { password: string }) => {
+    try {
+      if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
+        return { success: false, error: 'Senha incorreta.' }
+      }
+      return { success: true, closures: dbOperations.listShiftClosures(30) }
+    } catch (error) {
+      console.error('Erro ao listar fechamentos:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
   ipcMain.handle(
     'confirm-shift-closure',
-    (_event, data: { id: number; operatorName: string; cashCounted?: number | null }) => {
+    (_event, data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => {
       try {
+        if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
+          return { success: false, error: 'Senha incorreta.' }
+        }
         return dbOperations.confirmShiftClosure(data.id, {
           operatorName: data.operatorName,
           cashCounted: data.cashCounted ?? null

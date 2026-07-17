@@ -433,6 +433,9 @@ const stmts = {
   listShiftClosures: db.prepare(
     'SELECT * FROM shift_closures ORDER BY end_iso DESC LIMIT ?'
   ),
+  countPendingAutoClosures: db.prepare(
+    'SELECT COUNT(*) as count FROM shift_closures WHERE auto_closed = 1 AND confirmed_at IS NULL'
+  ),
   /** Pagamentos de renovação no intervalo [início, fim) ISO UTC — sem LIMIT (totais e CSV). */
   getPaymentsForRange: db.prepare(`
     SELECT sp.*, COALESCE(c.name, sp.payer_display_name, 'Cliente removido') as client_name
@@ -1274,7 +1277,10 @@ export const dbOperations = {
     const last = stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined
     const windowStartIso = resolveShiftWindowStart(last, shift.startIso, nowIso)
     const live = dbOperations.getShiftLiveData(windowStartIso, nowIso)
-    return { windowStartIso, live, closures: dbOperations.listShiftClosures(20) }
+    // Fechamentos NÃO saem no overview: o histórico é área restrita do
+    // gerente (senha) — aqui vai só a contagem de automáticos pendentes.
+    const pending = stmts.countPendingAutoClosures.get() as { count: number }
+    return { windowStartIso, live, pendingCount: pending?.count ?? 0 }
   },
 
   /**
