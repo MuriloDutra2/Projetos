@@ -73,6 +73,7 @@ const api = {
     months?: number
     paymentMethod?: string
     notes?: string
+    splitPayment?: { method: string; amount: number } | null
   }) => ipcRenderer.invoke('renew-subscription', data),
   getFinancialHistory: () => ipcRenderer.invoke('get-financial-history'),
   getFinancialSummaryByMethod: (data: { month: number; year: number }) =>

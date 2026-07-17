@@ -328,6 +328,37 @@ puro + cenário do vídeo completo (noite 1 paga, noite 2 grátis) + regressão 
 | 10 | Fechamento automático | `feat(caixa): fecha sozinho na virada; linha vermelha até confirmar` ✅ | QA virada + catch-up + confirmação |
 | 11 | Histórico restrito | `feat(caixa): fechamentos guardados sob senha do gerente` ✅ | QA senha + pendência sem expor dados |
 
+| 12 | Pagamento dividido | `feat(renovar): dividir pagamento em duas formas` ✅ | QA divisão 130+50 + vencimento avança 1 mês |
+
+Fase 12 (áudios de 16/07, garagista 130 cartão + 50 dinheiro): renovação de 1 mês pode ser
+dividida em DUAS formas de pagamento. A 2ª parte vira linha vinculada (`split_of`) na MESMA
+competência: caixa por forma exato, vencimento avança um mês só, "planos vendidos" conta 1.
+Divisão só para 1 mês (multi-meses continua forma única).
+
+**Correção do caso já ocorrido (rodar no parking.db de produção, com o gerente):**
+o operador renovou 2× (130 Cartão + 50 Dinheiro) e o vencimento pulou um mês a mais.
+
+```sql
+-- 1) localizar as duas linhas da renovação dupla (16/07, garagista):
+SELECT sp.id, c.id as client_id, c.name, sp.amount, sp.payment_method,
+       sp.competency_month, sp.payment_date
+FROM subscription_payments sp JOIN clients c ON c.id = sp.client_id
+WHERE sp.payment_date >= '2026-07-16T03:00:00' ORDER BY sp.id DESC LIMIT 10;
+
+-- 2) na 2ª linha (a de R$ 50), igualar a competência à da 1ª linha (a de R$ 130)
+--    e vinculá-la como divisão (substitua os IDs):
+UPDATE subscription_payments
+SET competency_month = (SELECT competency_month FROM subscription_payments WHERE id = ID_PRIMEIRA),
+    split_of = ID_PRIMEIRA
+WHERE id = ID_SEGUNDA;
+
+-- 3) voltar o vencimento do cliente em um mês (dia 10 do mês seguinte à competência real):
+UPDATE clients SET expiry_date = 'AAAA-MM-10' WHERE id = ID_CLIENTE;
+```
+
+O caixa por forma NÃO é tocado (payment_date/method ficam como estão). Após o passo 2,
+maxCompetency volta ao mês certo e o status de devedor fica coerente.
+
 Fase 11: os fechamentos ficam guardados sob a senha do gerente (a mesma de excluir
 veículos — constante unificada no main). A lista NÃO sai do processo main sem a senha
 (get-shift-closures valida no servidor; o overview expõe apenas a contagem de automáticos

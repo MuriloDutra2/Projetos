@@ -40,6 +40,10 @@ export default function ModalRenovar({
   const [paymentMethod, setPaymentMethod] = useState('Pix')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
+  // Fase 12 — pagamento dividido em duas formas (só para 1 mês)
+  const [splitEnabled, setSplitEnabled] = useState(false)
+  const [splitMethod, setSplitMethod] = useState('Dinheiro')
+  const [splitAmountStr, setSplitAmountStr] = useState('')
 
   useEffect(() => {
     if (open) {
@@ -47,6 +51,9 @@ export default function ModalRenovar({
       setMonths(1)
       setPaymentMethod('Pix')
       setNotes('')
+      setSplitEnabled(false)
+      setSplitMethod('Dinheiro')
+      setSplitAmountStr('')
     }
   }, [open])
 
@@ -59,12 +66,30 @@ export default function ModalRenovar({
 
   const isMensal = planType.startsWith('MENSAL')
   const monthsPaid = isMensal ? months : 1
+  const splitActive = splitEnabled && monthsPaid === 1
 
   const handleConfirm = async () => {
     const amount = parseCurrencyToNumber(amountStr)
     if (amount <= 0) {
       showAlert('Valor inválido', 'Informe um valor maior que zero.', 'error')
       return
+    }
+    let splitPayment: { method: string; amount: number } | null = null
+    if (splitActive) {
+      const splitAmount = parseCurrencyToNumber(splitAmountStr)
+      if (!(splitAmount > 0) || splitAmount >= amount) {
+        showAlert(
+          'Divisão inválida',
+          'O valor da segunda forma deve ser maior que zero e menor que o total.',
+          'error'
+        )
+        return
+      }
+      if (splitMethod === paymentMethod) {
+        showAlert('Divisão inválida', 'Escolha duas formas de pagamento diferentes.', 'error')
+        return
+      }
+      splitPayment = { method: splitMethod, amount: splitAmount }
     }
 
     setLoading(true)
@@ -75,7 +100,8 @@ export default function ModalRenovar({
         amount,
         months: monthsPaid,
         paymentMethod,
-        notes
+        notes,
+        splitPayment
       })
       if (result.success) {
         try {
@@ -204,6 +230,53 @@ export default function ModalRenovar({
               <option>Transferência</option>
             </select>
           </div>
+          {monthsPaid === 1 && (
+            <div>
+              <label className="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={splitEnabled}
+                  onChange={(e) => setSplitEnabled(e.target.checked)}
+                  className="w-4 h-4 accent-green-600"
+                />
+                Dividir pagamento em duas formas
+              </label>
+              {splitActive && (
+                <div className="mt-2 p-3 bg-gray-700/50 border border-gray-600 rounded-lg space-y-2">
+                  <div className="flex gap-2">
+                    <select
+                      value={splitMethod}
+                      onChange={(e) => setSplitMethod(e.target.value)}
+                      className="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
+                    >
+                      <option>Pix</option>
+                      <option>Dinheiro</option>
+                      <option>Cartão</option>
+                      <option>Transferência</option>
+                    </select>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={splitAmountStr}
+                      onChange={(e) => setSplitAmountStr(maskCurrency(e.target.value))}
+                      placeholder="0,00"
+                      className="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500"
+                    />
+                  </div>
+                  {parseCurrencyToNumber(amountStr) > 0 && parseCurrencyToNumber(splitAmountStr) > 0 && (
+                    <p className="text-xs text-gray-400">
+                      {paymentMethod}: R${' '}
+                      {(parseCurrencyToNumber(amountStr) - parseCurrencyToNumber(splitAmountStr))
+                        .toFixed(2)
+                        .replace('.', ',')}{' '}
+                      · {splitMethod}: R${' '}
+                      {parseCurrencyToNumber(splitAmountStr).toFixed(2).replace('.', ',')}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">
               Observação (opcional)

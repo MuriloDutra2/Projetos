@@ -32,6 +32,7 @@
 - [ ] **Saída gratuita (dentro da cota):** conferir que NÃO aparece pergunta de forma de pagamento.
 - [ ] **Excluir veículo (sem cobrança):** continua funcionando com a senha.
 - [ ] **Renovação multi-meses:** renovar 3 meses e conferir o total exibido no modal, o recibo (total + meses) e "planos vendidos = 1" no Relatório do dia.
+- [ ] **Pagamento dividido (Fase 12):** renovar 1 mês de R$ 180 marcando "Dividir pagamento" (Cartão 130 + Dinheiro 50) → o caixa por forma mostra 130 no Cartão e 50 no Dinheiro, "planos vendidos" conta 1, e o vencimento avança UM mês só. A opção não aparece para 2+ meses.
 - [ ] **Mensalista pago:** cliente com vencimento futuro mostra "Em dia" e entra no pátio como MENSALISTA (caso do vídeo de 09/07).
 - [ ] **Saída após 21h:** registrar uma saída depois das 21h e conferir que cai no dia certo no Relatório, Financeiro e Histórico.
 - [ ] **Total do mês:** conferir que o total de avulsos do Financeiro bate com a soma da tabela e com o CSV exportado.

@@ -70,7 +70,7 @@ declare global {
         garage_billing_day?: number | null
         garage_billing_month?: number | null
       }) => Promise<{ success: boolean; error?: string }>
-      renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
+      renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string; splitPayment?: { method: string; amount: number } | null }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
       getFinancialHistory: () => Promise<any[]>
       getFinancialSummaryByMethod: (data: { month: number; year: number }) => Promise<{ payment_method: string; total: number }[]>
       getFinanceMonthData: (data: { month: number; year: number }) => Promise<{

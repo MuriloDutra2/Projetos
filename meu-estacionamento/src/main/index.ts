@@ -369,6 +369,7 @@ app.whenReady().then(() => {
         months?: number
         paymentMethod?: string
         notes?: string
+        splitPayment?: { method: string; amount: number } | null
       }
     ) => {
       try {
@@ -378,7 +379,8 @@ app.whenReady().then(() => {
           amount: data.amount,
           months: data.months ?? 1,
           paymentMethod: data.paymentMethod ?? 'Não informado',
-          notes: data.notes ?? ''
+          notes: data.notes ?? '',
+          splitPayment: data.splitPayment ?? null
         })
         return { success: true, newExpiry }
       } catch (error) {

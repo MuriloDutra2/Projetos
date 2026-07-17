@@ -118,6 +118,10 @@ ensureColumn('subscription_payments', 'notes', 'notes TEXT')
 ensureColumn('clients', 'garage_billing_day', 'garage_billing_day INTEGER')
 ensureColumn('clients', 'garage_billing_month', 'garage_billing_month INTEGER')
 ensureColumn('subscription_payments', 'payer_display_name', 'payer_display_name TEXT')
+// Fase 12 — pagamento dividido na renovação: a 2ª parte (outra forma de
+// pagamento, mesma competência) referencia a linha principal. Nas contagens
+// de "planos vendidos", linhas com split_of não contam como venda.
+ensureColumn('subscription_payments', 'split_of', 'split_of INTEGER')
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS daily_reports (
@@ -394,7 +398,7 @@ const stmts = {
     'UPDATE subscription_payments SET payer_display_name = ? WHERE client_id = ?'
   ),
   insertSubscriptionPayment: db.prepare(
-    'INSERT INTO subscription_payments (client_id, amount, plan_type, payment_date, new_expiry_date, payment_method, competency_month, is_advance, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO subscription_payments (client_id, amount, plan_type, payment_date, new_expiry_date, payment_method, competency_month, is_advance, notes, split_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   getFinancialHistory: db.prepare(`
     SELECT sp.*, COALESCE(c.name, sp.payer_display_name, 'Cliente removido') as client_name
@@ -503,7 +507,7 @@ const stmts = {
    */
   getPlanosVendidosForRange: db.prepare(`
     SELECT
-      COALESCE(SUM(CASE WHEN COALESCE(is_advance, 0) = 0 THEN 1 ELSE 0 END), 0) as count,
+      COALESCE(SUM(CASE WHEN COALESCE(is_advance, 0) = 0 AND split_of IS NULL THEN 1 ELSE 0 END), 0) as count,
       COALESCE(SUM(amount), 0) as total
     FROM subscription_payments WHERE payment_date >= ? AND payment_date < ?
   `),
@@ -1046,11 +1050,23 @@ export const dbOperations = {
     months: number
     paymentMethod: string
     notes?: string
+    /** Fase 12 — 2ª forma de pagamento (mesma competência); só com months = 1. */
+    splitPayment?: { method: string; amount: number } | null
   }) => {
     const now = new Date()
     const paymentDateStr = now.toISOString()
     const notes = data.notes ?? ''
     const months = Math.max(1, Math.floor(data.months || 1))
+    const split = data.splitPayment ?? null
+    if (split) {
+      // Divisão: valida no servidor — 2ª parte positiva e menor que o total,
+      // e apenas para renovação de 1 mês (a UI também impede).
+      if (months !== 1) throw new Error('Pagamento dividido só está disponível para 1 mês.')
+      if (!(split.amount > 0) || split.amount >= data.amount) {
+        throw new Error('Valor da segunda forma deve ser maior que zero e menor que o total.')
+      }
+    }
+    const primaryAmount = split ? data.amount - split.amount : data.amount
     let newExpiryStr = ''
 
     if (data.planType.startsWith('MENSAL') || data.planType === 'GARAGEM') {
@@ -1065,17 +1081,34 @@ export const dbOperations = {
       for (let i = 0; i < months; i++) {
         const competency = dbOperations.addMonthsToCompetency(startComp, i)
         lastComp = competency
-        stmts.insertSubscriptionPayment.run(
+        const result = stmts.insertSubscriptionPayment.run(
           data.clientId,
-          data.amount,
+          primaryAmount,
           data.planType,
           paymentDateStr,
           '',
           data.paymentMethod || 'Não informado',
           competency,
           i > 0 ? 1 : 0,
-          notes
+          notes,
+          null
         )
+        if (split && i === 0) {
+          // 2ª forma: mesma competência, vinculada à linha principal —
+          // caixa por forma exato e o vencimento avança UM mês só.
+          stmts.insertSubscriptionPayment.run(
+            data.clientId,
+            split.amount,
+            data.planType,
+            paymentDateStr,
+            '',
+            split.method || 'Não informado',
+            competency,
+            0,
+            notes,
+            result.lastInsertRowid as number
+          )
+        }
       }
       const [y, m] = lastComp.split('-').map(Number)
       const exp = new Date(y, m, 10)
@@ -1084,17 +1117,32 @@ export const dbOperations = {
       const newExpiry = new Date(now)
       newExpiry.setDate(newExpiry.getDate() + 30)
       newExpiryStr = `${newExpiry.getFullYear()}-${String(newExpiry.getMonth() + 1).padStart(2, '0')}-${String(newExpiry.getDate()).padStart(2, '0')}`
-      stmts.insertSubscriptionPayment.run(
+      const result = stmts.insertSubscriptionPayment.run(
         data.clientId,
-        data.amount,
+        primaryAmount,
         data.planType,
         paymentDateStr,
         newExpiryStr,
         data.paymentMethod || 'Não informado',
         null,
         0,
-        notes
+        notes,
+        null
       )
+      if (split) {
+        stmts.insertSubscriptionPayment.run(
+          data.clientId,
+          split.amount,
+          data.planType,
+          paymentDateStr,
+          newExpiryStr,
+          split.method || 'Não informado',
+          null,
+          0,
+          notes,
+          result.lastInsertRowid as number
+        )
+      }
     }
 
     stmts.updateClientExpiry.run(newExpiryStr, data.clientId)
@@ -1110,6 +1158,7 @@ export const dbOperations = {
       amount: data.amount,
       months,
       paymentMethod: data.paymentMethod,
+      splitPayment: split,
       notes,
       newExpiryStr
     })
@@ -1183,7 +1232,7 @@ export const dbOperations = {
       totalAvulsos: tickets.reduce((s, t) => s + (t.valor ?? 0), 0),
       countAvulsos: tickets.length,
       totalRenovacoes: payments.reduce((s, p) => s + (p.amount ?? 0), 0),
-      countRenovacoes: payments.filter((p) => !p.is_advance).length,
+      countRenovacoes: payments.filter((p) => !p.is_advance && p.split_of == null).length,
       byMethod,
       tickets,
       payments
