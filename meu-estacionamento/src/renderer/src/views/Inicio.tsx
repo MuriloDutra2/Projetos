@@ -104,8 +104,11 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
   // Revalida o valor enquanto o modal está aberto: se a cota grátis vencer com
   // o modal em tela, o valor e os botões de forma de pagamento aparecem antes
   // do confirmar (sem isso o pagamento sairia como "Não informado").
+  // PARA durante o processamento (checkoutLoading): após confirmar, o ticket
+  // já foi finalizado e o uso grátis registrado — recalcular nesse instante
+  // exibia o valor dobrado na frente do cliente (áudio do operador, 16/07).
   useEffect(() => {
-    if (!modalOpen || !checkoutTicket) return
+    if (!modalOpen || !checkoutTicket || checkoutLoading) return
     const t = setInterval(async () => {
       try {
         const res = await calculateValue({
@@ -120,7 +123,7 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
       }
     }, 15000)
     return () => clearInterval(t)
-  }, [modalOpen, checkoutTicket])
+  }, [modalOpen, checkoutTicket, checkoutLoading])
 
   const handleCheckoutConfirm = async (paymentMethod?: string) => {
     if (!checkoutTicket) return
@@ -129,6 +132,8 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
       const result = await checkoutTicketService({ id: checkoutTicket.id, paymentMethod })
       if (result.success) {
         const valorCobrado = result.valor ?? checkoutValor
+        // Exibe no modal o valor REALMENTE cobrado enquanto imprime.
+        setCheckoutValor(valorCobrado)
         if (valorCobrado > 0 && checkoutTicket.tipo !== 'GARAGEM') {
           try {
             const saida = new Date().toISOString()
