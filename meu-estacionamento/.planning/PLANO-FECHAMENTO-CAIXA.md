@@ -325,6 +325,16 @@ puro + cenário do vídeo completo (noite 1 paga, noite 2 grátis) + regressão 
 
 | 8 | Cota única por estadia | `fix(cobranca): meia-noite não renova cota da estadia` ✅ (aprovada pela gerência em 09/07/2026) | UAT 23h→01:30 = R$ 4 |
 | 9 | Cota fantasma | `fix(cobranca): registrar só minutos grátis, no dia da entrada` ✅ | QA cenário 2 noites + regressão pátio |
+| 10 | Fechamento automático | `feat(caixa): fecha sozinho na virada; linha vermelha até confirmar` ✅ | QA virada + catch-up + confirmação |
+
+Fase 10 (pedido do operador, áudio de 16/07): o caixa fecha AUTOMATICAMENTE na troca de
+turno (07:00/19:00) — no minuto da virada com o app aberto, ou em catch-up no startup, com
+o corte na hora exata da virada. O registro automático fica VERMELHO no histórico
+("Fechado automaticamente pelo sistema — confirmar") até um operador confirmar (nome
+obrigatório, dinheiro contado opcional). Viradas sem movimento não geram registro (a
+janela vazia é absorvida pela próxima com movimento). Única atualização permitida em
+shift_closures é a confirmação (confirmed_by/confirmed_at + conferência se ainda vazia) —
+os totais permanecem imutáveis.
 
 Detalhe de implementação da Fase 7 (corrente de fechamentos): o intervalo real coberto por
 cada fechamento vai do **fim do fechamento anterior** (ou do início natural do turno, no

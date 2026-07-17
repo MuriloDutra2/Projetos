@@ -48,6 +48,25 @@ export function currentShift(now: Date, dayStartHour = 7, nightStartHour = 19): 
   }
 }
 
+/**
+ * Próxima virada de turno estritamente DEPOIS do instante dado (07:00 ou
+ * 19:00 locais). Usada pelo fechamento automático (Fase 10).
+ */
+export function nextShiftBoundaryAfter(d: Date, dayStartHour = 7, nightStartHour = 19): Date {
+  const y = d.getFullYear()
+  const m = d.getMonth()
+  const day = d.getDate()
+  const candidates = [
+    new Date(y, m, day, dayStartHour),
+    new Date(y, m, day, nightStartHour),
+    new Date(y, m, day + 1, dayStartHour)
+  ]
+  for (const c of candidates) {
+    if (c.getTime() > d.getTime()) return c
+  }
+  return new Date(y, m, day + 1, nightStartHour)
+}
+
 export function shiftLabel(shiftType: ShiftType, dayStartHour = 7, nightStartHour = 19): string {
   const hh = (n: number): string => `${String(n).padStart(2, '0')}:00`
   return shiftType === 'DIURNO'

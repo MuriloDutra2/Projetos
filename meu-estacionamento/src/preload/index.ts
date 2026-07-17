@@ -113,6 +113,8 @@ const api = {
   getShiftOverview: () => ipcRenderer.invoke('get-shift-overview'),
   closeShift: (data: { cashCounted?: number | null; operatorName?: string }) =>
     ipcRenderer.invoke('close-shift', data),
+  confirmShiftClosure: (data: { id: number; operatorName: string; cashCounted?: number | null }) =>
+    ipcRenderer.invoke('confirm-shift-closure', data),
   printShiftClosure: (data: unknown) => ipcRenderer.invoke('print-shift-closure', data),
 
   // ── Sync LAN ──

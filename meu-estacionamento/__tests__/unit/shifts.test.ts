@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { currentShift, shiftLabel } from '../../src/main/shifts'
+import { currentShift, shiftLabel, nextShiftBoundaryAfter } from '../../src/main/shifts'
 
 describe('currentShift', () => {
   it('07:00 em ponto inicia o turno diurno', () => {
@@ -53,6 +53,38 @@ describe('currentShift', () => {
   it('respeita horários configuráveis (ex.: 6h/18h)', () => {
     const s = currentShift(new Date(2026, 6, 9, 6, 30), 6, 18)
     expect(s.shiftType).toBe('DIURNO')
+  })
+})
+
+describe('nextShiftBoundaryAfter (fechamento automático)', () => {
+  it('meio-dia → 19:00 do mesmo dia', () => {
+    const b = nextShiftBoundaryAfter(new Date(2026, 6, 16, 12, 0))
+    expect(b.getTime()).toBe(new Date(2026, 6, 16, 19, 0).getTime())
+  })
+
+  it('20:00 → 07:00 do dia seguinte', () => {
+    const b = nextShiftBoundaryAfter(new Date(2026, 6, 16, 20, 0))
+    expect(b.getTime()).toBe(new Date(2026, 6, 17, 7, 0).getTime())
+  })
+
+  it('madrugada (03:00) → 07:00 do mesmo dia', () => {
+    const b = nextShiftBoundaryAfter(new Date(2026, 6, 16, 3, 0))
+    expect(b.getTime()).toBe(new Date(2026, 6, 16, 7, 0).getTime())
+  })
+
+  it('exatamente na virada (07:00) → próxima virada (19:00), estritamente depois', () => {
+    const b = nextShiftBoundaryAfter(new Date(2026, 6, 16, 7, 0))
+    expect(b.getTime()).toBe(new Date(2026, 6, 16, 19, 0).getTime())
+  })
+
+  it('virada de mês: 31/07 23h → 07:00 de 01/08', () => {
+    const b = nextShiftBoundaryAfter(new Date(2026, 6, 31, 23, 0))
+    expect(b.getTime()).toBe(new Date(2026, 7, 1, 7, 0).getTime())
+  })
+
+  it('respeita horários configuráveis (6h/18h)', () => {
+    const b = nextShiftBoundaryAfter(new Date(2026, 6, 16, 5, 0), 6, 18)
+    expect(b.getTime()).toBe(new Date(2026, 6, 16, 6, 0).getTime())
   })
 })
 

@@ -129,8 +129,12 @@ declare global {
           cash_difference: number | null
           operator_name: string | null
           closed_at: string
+          auto_closed: number
+          confirmed_by: string | null
+          confirmed_at: string | null
         }[]
       } | null>
+      confirmShiftClosure: (data: { id: number; operatorName: string; cashCounted?: number | null }) => Promise<{ success: boolean; error?: string }>
       closeShift: (data: { cashCounted?: number | null; operatorName?: string }) => Promise<{
         success: boolean
         closure?: {
@@ -149,6 +153,9 @@ declare global {
           cash_difference: number | null
           operator_name: string | null
           closed_at: string
+          auto_closed: number
+          confirmed_by: string | null
+          confirmed_at: string | null
         }
         error?: string
       }>

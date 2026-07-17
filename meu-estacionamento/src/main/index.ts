@@ -465,6 +465,41 @@ app.whenReady().then(() => {
     }
   )
 
+  ipcMain.handle(
+    'confirm-shift-closure',
+    (_event, data: { id: number; operatorName: string; cashCounted?: number | null }) => {
+      try {
+        return dbOperations.confirmShiftClosure(data.id, {
+          operatorName: data.operatorName,
+          cashCounted: data.cashCounted ?? null
+        })
+      } catch (error) {
+        console.error('Erro ao confirmar fechamento:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  // Fase 10 — fechamento automático na troca de turno (07:00/19:00):
+  // catch-up no startup (viradas perdidas com o app fechado) e verificação
+  // por minuto com o app aberto. Idempotente; erros não derrubam o app.
+  const runAutoClose = (): void => {
+    try {
+      const cfg = getConfig()
+      const created = dbOperations.autoCloseDueShifts(
+        cfg.shiftDayStartHour ?? 7,
+        cfg.shiftNightStartHour ?? 19
+      )
+      if (created.length > 0) {
+        console.log(`[caixa] ${created.length} fechamento(s) automático(s) na troca de turno.`)
+      }
+    } catch (e) {
+      console.error('Erro no fechamento automático:', e)
+    }
+  }
+  runAutoClose()
+  setInterval(runAutoClose, 60000)
+
   ipcMain.handle('print-shift-closure', async (_event, data: ShiftClosureReceiptData) => {
     try {
       await printShiftClosureReceipt(data)

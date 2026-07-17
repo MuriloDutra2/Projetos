@@ -48,6 +48,9 @@
 - [ ] **Fechamento vazio bloqueado:** tentar fechar um caixa sem nenhum movimento e sem dinheiro contado → deve avisar "Não há movimento neste caixa para fechar".
 - [ ] **Transação após fechar:** registrar uma saída depois do fechamento e conferir que ela entra no caixa novo (card "Desde HH:mm").
 - [ ] **Turno noturno:** fechar um caixa de madrugada e conferir que a janela cobre desde as 19h de ontem (cruza a meia-noite inteiro).
+- [ ] **Fechamento automático (Fase 10):** deixar o caixa aberto na virada do turno (07h/19h) com o app aberto → o sistema fecha sozinho; a linha aparece VERMELHA no histórico com "Fechado automaticamente pelo sistema — confirmar".
+- [ ] **Confirmar caixa automático:** clicar em "Confirmar caixa" na linha vermelha → operador obrigatório, dinheiro contado opcional; após confirmar, a linha sai do vermelho e mostra "Automático · confirmado por X".
+- [ ] **Catch-up:** fechar o app antes da virada e reabrir depois → o fechamento automático da virada perdida é criado no startup, com o corte na hora exata da virada.
 
 ### 4. Dados persistentes
 - [ ] Fechar o app e abrir de novo: conferir se os tickets e assinantes continuam lá.

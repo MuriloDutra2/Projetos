@@ -51,6 +51,9 @@ export interface ShiftClosure {
   cash_difference: number | null
   operator_name: string | null
   closed_at: string
+  auto_closed: number
+  confirmed_by: string | null
+  confirmed_at: string | null
 }
 
 export interface ShiftOverview {
@@ -75,6 +78,15 @@ export async function closeShift(data: {
   operatorName?: string
 }): Promise<{ success: boolean; closure?: ShiftClosure; error?: string }> {
   return window.api.closeShift(data)
+}
+
+/** Confirma um fechamento automático pendente (linha vermelha do histórico). */
+export async function confirmShiftClosure(data: {
+  id: number
+  operatorName: string
+  cashCounted?: number | null
+}): Promise<{ success: boolean; error?: string }> {
+  return window.api.confirmShiftClosure(data)
 }
 
 export async function printShiftClosure(data: {
