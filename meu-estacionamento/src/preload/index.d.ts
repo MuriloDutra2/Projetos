@@ -70,7 +70,7 @@ declare global {
         garage_billing_day?: number | null
         garage_billing_month?: number | null
       }) => Promise<{ success: boolean; error?: string }>
-      renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
+      renewSubscription: (data: { clientId: number; planType: string; amount: number; months?: number; paymentMethod?: string; notes?: string; splitPayment?: { method: string; amount: number } | null }) => Promise<{ success: boolean; newExpiry?: string; error?: string }>
       getFinancialHistory: () => Promise<any[]>
       getFinancialSummaryByMethod: (data: { month: number; year: number }) => Promise<{ payment_method: string; total: number }[]>
       getFinanceMonthData: (data: { month: number; year: number }) => Promise<{
@@ -113,7 +113,12 @@ declare global {
           tickets: { id: number; placa: string; tipo: string; entrada: string; saida: string; valor: number | null; payment_method: string | null }[]
           payments: { id: number; amount: number; plan_type: string; payment_date: string; payment_method: string | null; competency_month: string | null; client_name: string }[]
         } | null
-        closures: {
+        pendingCount: number
+      } | null>
+      getShiftClosures: (data: { password: string }) => Promise<{
+        success: boolean
+        error?: string
+        closures?: {
           id: number
           shift_date: string
           shift_type: string
@@ -129,8 +134,12 @@ declare global {
           cash_difference: number | null
           operator_name: string | null
           closed_at: string
+          auto_closed: number
+          confirmed_by: string | null
+          confirmed_at: string | null
         }[]
-      } | null>
+      }>
+      confirmShiftClosure: (data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => Promise<{ success: boolean; error?: string }>
       closeShift: (data: { cashCounted?: number | null; operatorName?: string }) => Promise<{
         success: boolean
         closure?: {
@@ -149,6 +158,9 @@ declare global {
           cash_difference: number | null
           operator_name: string | null
           closed_at: string
+          auto_closed: number
+          confirmed_by: string | null
+          confirmed_at: string | null
         }
         error?: string
       }>

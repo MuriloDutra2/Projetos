@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto'
 import { effectiveBillingDayInMonth } from './garageDates'
 import { localDayToIsoRange, localMonthToIsoRange } from './dateRanges'
 import { isCoveredNow, financialStatusFor, localDateStr, localMonthKey } from './clientStatus'
+import { currentShift, nextShiftBoundaryAfter } from './shifts'
 
 const dbPath =
   process.env.NODE_ENV === 'development'
@@ -117,6 +118,10 @@ ensureColumn('subscription_payments', 'notes', 'notes TEXT')
 ensureColumn('clients', 'garage_billing_day', 'garage_billing_day INTEGER')
 ensureColumn('clients', 'garage_billing_month', 'garage_billing_month INTEGER')
 ensureColumn('subscription_payments', 'payer_display_name', 'payer_display_name TEXT')
+// Fase 12 — pagamento dividido na renovação: a 2ª parte (outra forma de
+// pagamento, mesma competência) referencia a linha principal. Nas contagens
+// de "planos vendidos", linhas com split_of não contam como venda.
+ensureColumn('subscription_payments', 'split_of', 'split_of INTEGER')
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS daily_reports (
@@ -268,6 +273,13 @@ if (shiftClosureIndexes.some((i) => i.origin === 'u')) {
   rebuildShiftClosures()
 }
 
+// Fase 10 — fechamento automático na troca de turno: marca a origem do
+// fechamento e a confirmação posterior do operador (linha vermelha no
+// histórico até ser confirmada).
+ensureColumn('shift_closures', 'auto_closed', 'auto_closed INTEGER NOT NULL DEFAULT 0')
+ensureColumn('shift_closures', 'confirmed_by', 'confirmed_by TEXT')
+ensureColumn('shift_closures', 'confirmed_at', 'confirmed_at TEXT')
+
 /** Registra uma operação de escrita no sync_log para replicação LAN. */
 function logSync(
   tableName: string,
@@ -386,7 +398,7 @@ const stmts = {
     'UPDATE subscription_payments SET payer_display_name = ? WHERE client_id = ?'
   ),
   insertSubscriptionPayment: db.prepare(
-    'INSERT INTO subscription_payments (client_id, amount, plan_type, payment_date, new_expiry_date, payment_method, competency_month, is_advance, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO subscription_payments (client_id, amount, plan_type, payment_date, new_expiry_date, payment_method, competency_month, is_advance, notes, split_of) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ),
   getFinancialHistory: db.prepare(`
     SELECT sp.*, COALESCE(c.name, sp.payer_display_name, 'Cliente removido') as client_name
@@ -406,14 +418,27 @@ const stmts = {
     INSERT INTO shift_closures (
       shift_date, shift_type, start_iso, end_iso,
       total_avulsos, total_renovacoes, count_avulsos, count_renovacoes,
-      by_method_json, cash_expected, cash_counted, cash_difference, operator_name, closed_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      by_method_json, cash_expected, cash_counted, cash_difference, operator_name, closed_at,
+      auto_closed
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
+  /** Única atualização permitida em fechamentos: confirmar um AUTOMÁTICO pendente (totais imutáveis). */
+  confirmShiftClosure: db.prepare(`
+    UPDATE shift_closures
+    SET confirmed_by = ?, confirmed_at = ?,
+        cash_counted = COALESCE(cash_counted, ?),
+        cash_difference = COALESCE(cash_difference, ?)
+    WHERE id = ? AND auto_closed = 1 AND confirmed_at IS NULL
+  `),
+  getShiftClosureById: db.prepare('SELECT * FROM shift_closures WHERE id = ?'),
   getLastShiftClosure: db.prepare(
     'SELECT * FROM shift_closures ORDER BY end_iso DESC LIMIT 1'
   ),
   listShiftClosures: db.prepare(
     'SELECT * FROM shift_closures ORDER BY end_iso DESC LIMIT ?'
+  ),
+  countPendingAutoClosures: db.prepare(
+    'SELECT COUNT(*) as count FROM shift_closures WHERE auto_closed = 1 AND confirmed_at IS NULL'
   ),
   /** Pagamentos de renovação no intervalo [início, fim) ISO UTC — sem LIMIT (totais e CSV). */
   getPaymentsForRange: db.prepare(`
@@ -482,7 +507,7 @@ const stmts = {
    */
   getPlanosVendidosForRange: db.prepare(`
     SELECT
-      COALESCE(SUM(CASE WHEN COALESCE(is_advance, 0) = 0 THEN 1 ELSE 0 END), 0) as count,
+      COALESCE(SUM(CASE WHEN COALESCE(is_advance, 0) = 0 AND split_of IS NULL THEN 1 ELSE 0 END), 0) as count,
       COALESCE(SUM(amount), 0) as total
     FROM subscription_payments WHERE payment_date >= ? AND payment_date < ?
   `),
@@ -570,6 +595,9 @@ export interface ShiftClosureRow {
   cash_difference: number | null
   operator_name: string | null
   closed_at: string
+  auto_closed: number
+  confirmed_by: string | null
+  confirmed_at: string | null
 }
 
 export { effectiveBillingDayInMonth } from './garageDates'
@@ -638,6 +666,46 @@ function mergeByMethod(
     byMethod: [...merged.values()].sort((a, b) => b.total - a.total),
     cashExpected: merged.get('Dinheiro')?.total ?? 0
   }
+}
+
+/** Caminho único de gravação de fechamento (manual e automático) + sync_log. */
+function insertShiftClosureRecord(
+  shift: { shiftDate: string; shiftType: string },
+  startIso: string,
+  endIso: string,
+  closedAt: string,
+  totals: {
+    totalAvulsos: number
+    totalRenovacoes: number
+    countAvulsos: number
+    countRenovacoes: number
+    byMethod: unknown
+    cashExpected: number
+  },
+  data: { cashCounted: number | null; operatorName: string | null; auto: boolean }
+): ShiftClosureRow {
+  const cashDifference = data.cashCounted != null ? data.cashCounted - totals.cashExpected : null
+  const result = stmts.insertShiftClosure.run(
+    shift.shiftDate,
+    shift.shiftType,
+    startIso,
+    endIso,
+    totals.totalAvulsos,
+    totals.totalRenovacoes,
+    totals.countAvulsos,
+    totals.countRenovacoes,
+    JSON.stringify(totals.byMethod),
+    totals.cashExpected,
+    data.cashCounted,
+    cashDifference,
+    data.operatorName,
+    closedAt,
+    data.auto ? 1 : 0
+  )
+  const id = result.lastInsertRowid as number
+  const row = stmts.getShiftClosureById.get(id) as ShiftClosureRow
+  logSync('shift_closures', id, 'INSERT', { ...row })
+  return row
 }
 
 function resolveShiftWindowStart(
@@ -982,11 +1050,23 @@ export const dbOperations = {
     months: number
     paymentMethod: string
     notes?: string
+    /** Fase 12 — 2ª forma de pagamento (mesma competência); só com months = 1. */
+    splitPayment?: { method: string; amount: number } | null
   }) => {
     const now = new Date()
     const paymentDateStr = now.toISOString()
     const notes = data.notes ?? ''
     const months = Math.max(1, Math.floor(data.months || 1))
+    const split = data.splitPayment ?? null
+    if (split) {
+      // Divisão: valida no servidor — 2ª parte positiva e menor que o total,
+      // e apenas para renovação de 1 mês (a UI também impede).
+      if (months !== 1) throw new Error('Pagamento dividido só está disponível para 1 mês.')
+      if (!(split.amount > 0) || split.amount >= data.amount) {
+        throw new Error('Valor da segunda forma deve ser maior que zero e menor que o total.')
+      }
+    }
+    const primaryAmount = split ? data.amount - split.amount : data.amount
     let newExpiryStr = ''
 
     if (data.planType.startsWith('MENSAL') || data.planType === 'GARAGEM') {
@@ -1001,17 +1081,34 @@ export const dbOperations = {
       for (let i = 0; i < months; i++) {
         const competency = dbOperations.addMonthsToCompetency(startComp, i)
         lastComp = competency
-        stmts.insertSubscriptionPayment.run(
+        const result = stmts.insertSubscriptionPayment.run(
           data.clientId,
-          data.amount,
+          primaryAmount,
           data.planType,
           paymentDateStr,
           '',
           data.paymentMethod || 'Não informado',
           competency,
           i > 0 ? 1 : 0,
-          notes
+          notes,
+          null
         )
+        if (split && i === 0) {
+          // 2ª forma: mesma competência, vinculada à linha principal —
+          // caixa por forma exato e o vencimento avança UM mês só.
+          stmts.insertSubscriptionPayment.run(
+            data.clientId,
+            split.amount,
+            data.planType,
+            paymentDateStr,
+            '',
+            split.method || 'Não informado',
+            competency,
+            0,
+            notes,
+            result.lastInsertRowid as number
+          )
+        }
       }
       const [y, m] = lastComp.split('-').map(Number)
       const exp = new Date(y, m, 10)
@@ -1020,17 +1117,32 @@ export const dbOperations = {
       const newExpiry = new Date(now)
       newExpiry.setDate(newExpiry.getDate() + 30)
       newExpiryStr = `${newExpiry.getFullYear()}-${String(newExpiry.getMonth() + 1).padStart(2, '0')}-${String(newExpiry.getDate()).padStart(2, '0')}`
-      stmts.insertSubscriptionPayment.run(
+      const result = stmts.insertSubscriptionPayment.run(
         data.clientId,
-        data.amount,
+        primaryAmount,
         data.planType,
         paymentDateStr,
         newExpiryStr,
         data.paymentMethod || 'Não informado',
         null,
         0,
-        notes
+        notes,
+        null
       )
+      if (split) {
+        stmts.insertSubscriptionPayment.run(
+          data.clientId,
+          split.amount,
+          data.planType,
+          paymentDateStr,
+          newExpiryStr,
+          split.method || 'Não informado',
+          null,
+          0,
+          notes,
+          result.lastInsertRowid as number
+        )
+      }
     }
 
     stmts.updateClientExpiry.run(newExpiryStr, data.clientId)
@@ -1046,6 +1158,7 @@ export const dbOperations = {
       amount: data.amount,
       months,
       paymentMethod: data.paymentMethod,
+      splitPayment: split,
       notes,
       newExpiryStr
     })
@@ -1119,7 +1232,7 @@ export const dbOperations = {
       totalAvulsos: tickets.reduce((s, t) => s + (t.valor ?? 0), 0),
       countAvulsos: tickets.length,
       totalRenovacoes: payments.reduce((s, p) => s + (p.amount ?? 0), 0),
-      countRenovacoes: payments.filter((p) => !p.is_advance).length,
+      countRenovacoes: payments.filter((p) => !p.is_advance && p.split_of == null).length,
       byMethod,
       tickets,
       payments
@@ -1213,7 +1326,10 @@ export const dbOperations = {
     const last = stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined
     const windowStartIso = resolveShiftWindowStart(last, shift.startIso, nowIso)
     const live = dbOperations.getShiftLiveData(windowStartIso, nowIso)
-    return { windowStartIso, live, closures: dbOperations.listShiftClosures(20) }
+    // Fechamentos NÃO saem no overview: o histórico é área restrita do
+    // gerente (senha) — aqui vai só a contagem de automáticos pendentes.
+    const pending = stmts.countPendingAutoClosures.get() as { count: number }
+    return { windowStartIso, live, pendingCount: pending?.count ?? 0 }
   },
 
   /**
@@ -1235,48 +1351,92 @@ export const dbOperations = {
     if (live.total === 0 && cashCounted == null) {
       return { success: false as const, error: 'Não há movimento neste caixa para fechar.' }
     }
-    const cashDifference = cashCounted != null ? cashCounted - live.cashExpected : null
     try {
-      const result = stmts.insertShiftClosure.run(
-        shift.shiftDate,
-        shift.shiftType,
-        windowStart,
-        closedAt,
-        live.totalAvulsos,
-        live.totalRenovacoes,
-        live.countAvulsos,
-        live.countRenovacoes,
-        JSON.stringify(live.byMethod),
-        live.cashExpected,
+      const closure = insertShiftClosureRecord(shift, windowStart, closedAt, closedAt, live, {
         cashCounted,
-        cashDifference,
-        data.operatorName?.trim() || null,
-        closedAt
-      )
-      const id = result.lastInsertRowid as number
-      logSync('shift_closures', id, 'INSERT', {
-        id,
-        shift_date: shift.shiftDate,
-        shift_type: shift.shiftType,
-        start_iso: windowStart,
-        end_iso: closedAt,
-        total_avulsos: live.totalAvulsos,
-        total_renovacoes: live.totalRenovacoes,
-        count_avulsos: live.countAvulsos,
-        count_renovacoes: live.countRenovacoes,
-        by_method_json: JSON.stringify(live.byMethod),
-        cash_expected: live.cashExpected,
-        cash_counted: cashCounted,
-        cash_difference: cashDifference,
-        operator_name: data.operatorName?.trim() || null,
-        closed_at: closedAt
+        operatorName: data.operatorName?.trim() || null,
+        auto: false
       })
-      const closure = stmts.getLastShiftClosure.get() as ShiftClosureRow
       return { success: true as const, closure }
     } catch (e) {
       console.error('Erro ao gravar fechamento de caixa:', e)
       return { success: false as const, error: 'Não foi possível registrar o fechamento.' }
     }
+  },
+
+  /**
+   * Fase 10 — fechamento AUTOMÁTICO na troca de turno. Percorre as viradas
+   * (07:00/19:00) já passadas desde o fim do último fechamento e corta o
+   * caixa em cada uma que tenha movimento, marcando auto_closed = 1
+   * (pendente de confirmação do operador). Viradas sem movimento não geram
+   * registro — a janela seguinte as absorve. Roda no startup (catch-up) e a
+   * cada minuto com o app aberto; idempotente.
+   */
+  autoCloseDueShifts: (dayStartHour: number, nightStartHour: number) => {
+    const created: ShiftClosureRow[] = []
+    try {
+      const now = new Date()
+      const nowIso = now.toISOString()
+      const last = stmts.getLastShiftClosure.get() as ShiftClosureRow | undefined
+      // Sem fechamento anterior: âncora no início natural do turno atual
+      // (não força cortes de dias antigos no primeiro uso).
+      let anchor = last
+        ? resolveShiftWindowStart(last, currentShift(now, dayStartHour, nightStartHour).startIso, nowIso)
+        : currentShift(now, dayStartHour, nightStartHour).startIso
+      // Percorre as viradas passadas; viradas sem movimento não geram
+      // registro (a janela vazia é absorvida pela próxima com movimento).
+      let cursor = new Date(anchor)
+      for (let guard = 0; guard < 400; guard++) {
+        const boundary = nextShiftBoundaryAfter(cursor, dayStartHour, nightStartHour)
+        if (boundary.getTime() > now.getTime()) break
+        const boundaryIso = boundary.toISOString()
+        const totals = dbOperations.getShiftTotals(anchor, boundaryIso)
+        if (totals.total > 0) {
+          // Turno que TERMINOU nesta virada (um instante antes dela)
+          const endedShift = currentShift(new Date(boundary.getTime() - 60000), dayStartHour, nightStartHour)
+          created.push(
+            insertShiftClosureRecord(endedShift, anchor, boundaryIso, nowIso, totals, {
+              cashCounted: null,
+              operatorName: null,
+              auto: true
+            })
+          )
+          anchor = boundaryIso
+        }
+        cursor = boundary
+      }
+    } catch (e) {
+      console.error('Erro no fechamento automático de turno:', e)
+    }
+    return created
+  },
+
+  /**
+   * Confirma um fechamento AUTOMÁTICO pendente: operador obrigatório e
+   * conferência de dinheiro opcional. Única atualização permitida em
+   * shift_closures — os totais permanecem imutáveis.
+   */
+  confirmShiftClosure: (id: number, data: { operatorName: string; cashCounted?: number | null }) => {
+    const operator = data.operatorName?.trim()
+    if (!operator) return { success: false as const, error: 'Informe o nome de quem confirma.' }
+    const row = stmts.getShiftClosureById.get(id) as ShiftClosureRow | undefined
+    if (!row) return { success: false as const, error: 'Fechamento não encontrado.' }
+    if (!row.auto_closed) return { success: false as const, error: 'Este fechamento já foi feito manualmente.' }
+    if (row.confirmed_at) return { success: false as const, error: 'Este fechamento já foi confirmado.' }
+    const confirmedAt = new Date().toISOString()
+    const cashCounted = data.cashCounted ?? null
+    const cashDifference =
+      cashCounted != null && row.cash_counted == null ? cashCounted - (row.cash_expected ?? 0) : null
+    stmts.confirmShiftClosure.run(operator, confirmedAt, cashCounted, cashDifference, id)
+    logSync('shift_closures', id, 'UPDATE', {
+      id,
+      confirmed_by: operator,
+      confirmed_at: confirmedAt,
+      cash_counted: cashCounted,
+      cash_difference: cashDifference
+    })
+    const closure = stmts.getShiftClosureById.get(id) as ShiftClosureRow
+    return { success: true as const, closure }
   },
 
   getClientStatement: (clientId: number) => {

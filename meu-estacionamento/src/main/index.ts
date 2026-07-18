@@ -369,6 +369,7 @@ app.whenReady().then(() => {
         months?: number
         paymentMethod?: string
         notes?: string
+        splitPayment?: { method: string; amount: number } | null
       }
     ) => {
       try {
@@ -378,7 +379,8 @@ app.whenReady().then(() => {
           amount: data.amount,
           months: data.months ?? 1,
           paymentMethod: data.paymentMethod ?? 'Não informado',
-          notes: data.notes ?? ''
+          notes: data.notes ?? '',
+          splitPayment: data.splitPayment ?? null
         })
         return { success: true, newExpiry }
       } catch (error) {
@@ -464,6 +466,59 @@ app.whenReady().then(() => {
       }
     }
   )
+
+  // Histórico de fechamentos: área restrita do gerente. A lista só sai do
+  // processo main mediante a senha (a mesma de excluir veículos) — não é
+  // apenas um bloqueio visual no renderer.
+  ipcMain.handle('get-shift-closures', (_event, data: { password: string }) => {
+    try {
+      if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
+        return { success: false, error: 'Senha incorreta.' }
+      }
+      return { success: true, closures: dbOperations.listShiftClosures(30) }
+    } catch (error) {
+      console.error('Erro ao listar fechamentos:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
+  ipcMain.handle(
+    'confirm-shift-closure',
+    (_event, data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => {
+      try {
+        if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
+          return { success: false, error: 'Senha incorreta.' }
+        }
+        return dbOperations.confirmShiftClosure(data.id, {
+          operatorName: data.operatorName,
+          cashCounted: data.cashCounted ?? null
+        })
+      } catch (error) {
+        console.error('Erro ao confirmar fechamento:', error)
+        return { success: false, error: String(error) }
+      }
+    }
+  )
+
+  // Fase 10 — fechamento automático na troca de turno (07:00/19:00):
+  // catch-up no startup (viradas perdidas com o app fechado) e verificação
+  // por minuto com o app aberto. Idempotente; erros não derrubam o app.
+  const runAutoClose = (): void => {
+    try {
+      const cfg = getConfig()
+      const created = dbOperations.autoCloseDueShifts(
+        cfg.shiftDayStartHour ?? 7,
+        cfg.shiftNightStartHour ?? 19
+      )
+      if (created.length > 0) {
+        console.log(`[caixa] ${created.length} fechamento(s) automático(s) na troca de turno.`)
+      }
+    } catch (e) {
+      console.error('Erro no fechamento automático:', e)
+    }
+  }
+  runAutoClose()
+  setInterval(runAutoClose, 60000)
 
   ipcMain.handle('print-shift-closure', async (_event, data: ShiftClosureReceiptData) => {
     try {

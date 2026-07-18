@@ -51,6 +51,9 @@ export interface ShiftClosure {
   cash_difference: number | null
   operator_name: string | null
   closed_at: string
+  auto_closed: number
+  confirmed_by: string | null
+  confirmed_at: string | null
 }
 
 export interface ShiftOverview {
@@ -63,7 +66,8 @@ export interface ShiftOverview {
   }
   windowStartIso: string
   live: ShiftLiveData | null
-  closures: ShiftClosure[]
+  /** Fechamentos automáticos aguardando confirmação (a lista em si é restrita ao gerente). */
+  pendingCount: number
 }
 
 export async function getShiftOverview(): Promise<ShiftOverview | null> {
@@ -75,6 +79,23 @@ export async function closeShift(data: {
   operatorName?: string
 }): Promise<{ success: boolean; closure?: ShiftClosure; error?: string }> {
   return window.api.closeShift(data)
+}
+
+/** Lista de fechamentos — área restrita do gerente (senha validada no processo main). */
+export async function getShiftClosures(data: {
+  password: string
+}): Promise<{ success: boolean; error?: string; closures?: ShiftClosure[] }> {
+  return window.api.getShiftClosures(data)
+}
+
+/** Confirma um fechamento automático pendente (linha vermelha do histórico; exige a senha do gerente). */
+export async function confirmShiftClosure(data: {
+  id: number
+  operatorName: string
+  cashCounted?: number | null
+  password: string
+}): Promise<{ success: boolean; error?: string }> {
+  return window.api.confirmShiftClosure(data)
 }
 
 export async function printShiftClosure(data: {

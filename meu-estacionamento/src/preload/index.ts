@@ -73,6 +73,7 @@ const api = {
     months?: number
     paymentMethod?: string
     notes?: string
+    splitPayment?: { method: string; amount: number } | null
   }) => ipcRenderer.invoke('renew-subscription', data),
   getFinancialHistory: () => ipcRenderer.invoke('get-financial-history'),
   getFinancialSummaryByMethod: (data: { month: number; year: number }) =>
@@ -113,6 +114,14 @@ const api = {
   getShiftOverview: () => ipcRenderer.invoke('get-shift-overview'),
   closeShift: (data: { cashCounted?: number | null; operatorName?: string }) =>
     ipcRenderer.invoke('close-shift', data),
+  getShiftClosures: (data: { password: string }) =>
+    ipcRenderer.invoke('get-shift-closures', data),
+  confirmShiftClosure: (data: {
+    id: number
+    operatorName: string
+    cashCounted?: number | null
+    password: string
+  }) => ipcRenderer.invoke('confirm-shift-closure', data),
   printShiftClosure: (data: unknown) => ipcRenderer.invoke('print-shift-closure', data),
 
   // ── Sync LAN ──
