@@ -66,7 +66,9 @@ export default function FechamentoCaixa(): React.JSX.Element {
         setClosures(res.closures)
         setPasswordInput('')
       } else {
-        showAlert('Acesso negado', friendlyError(res.error ?? 'Senha incorreta.'), 'error')
+        // `message` é aviso esperado (ex.: senha errada) e vai limpo para a
+        // tela; só `error` (falha inesperada) passa pelo tradutor técnico.
+        showAlert('Acesso negado', res.message ?? friendlyError(res.error ?? 'Senha incorreta.'), 'error')
       }
     } catch (err) {
       console.error(err)
@@ -107,6 +109,8 @@ export default function FechamentoCaixa(): React.JSX.Element {
         reload()
         void refreshClosures()
         showAlert('Caixa confirmado', 'Fechamento automático confirmado com sucesso.', 'success')
+      } else if (res.message) {
+        showAlert('Atenção', res.message, 'error')
       } else {
         showAlert('Erro', friendlyError(res.error ?? 'Erro ao confirmar'), 'error')
       }
@@ -188,6 +192,8 @@ export default function FechamentoCaixa(): React.JSX.Element {
             if (!printRes.success) {
               showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
             }
+          } else if (res.message) {
+            showAlert('Atenção', res.message, 'error')
           } else {
             showAlert('Erro', friendlyError(res.error ?? 'Erro ao fechar caixa'), 'error')
           }

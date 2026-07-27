@@ -1450,7 +1450,7 @@ export const dbOperations = {
     const live = dbOperations.getShiftTotals(windowStart, closedAt)
     const cashCounted = data.cashCounted ?? null
     if (live.total === 0 && cashCounted == null) {
-      return { success: false as const, error: 'Não há movimento neste caixa para fechar.' }
+      return { success: false as const, message: 'Não há movimento neste caixa para fechar.' }
     }
     try {
       const closure = insertShiftClosureRecord(shift, windowStart, closedAt, closedAt, live, {
@@ -1518,12 +1518,13 @@ export const dbOperations = {
    * shift_closures — os totais permanecem imutáveis.
    */
   confirmShiftClosure: (id: number, data: { operatorName: string; cashCounted?: number | null }) => {
+    // Validações esperadas vão em `message` (exibidas limpas ao operador).
     const operator = data.operatorName?.trim()
-    if (!operator) return { success: false as const, error: 'Informe o nome de quem confirma.' }
+    if (!operator) return { success: false as const, message: 'Informe o nome de quem confirma.' }
     const row = stmts.getShiftClosureById.get(id) as ShiftClosureRow | undefined
-    if (!row) return { success: false as const, error: 'Fechamento não encontrado.' }
-    if (!row.auto_closed) return { success: false as const, error: 'Este fechamento já foi feito manualmente.' }
-    if (row.confirmed_at) return { success: false as const, error: 'Este fechamento já foi confirmado.' }
+    if (!row) return { success: false as const, message: 'Fechamento não encontrado.' }
+    if (!row.auto_closed) return { success: false as const, message: 'Este fechamento já foi feito manualmente.' }
+    if (row.confirmed_at) return { success: false as const, message: 'Este fechamento já foi confirmado.' }
     const confirmedAt = new Date().toISOString()
     const cashCounted = data.cashCounted ?? null
     const cashDifference =

@@ -472,8 +472,10 @@ app.whenReady().then(() => {
   // apenas um bloqueio visual no renderer.
   ipcMain.handle('get-shift-closures', (_event, data: { password: string }) => {
     try {
+      // Validação esperada vai em `message` (exibida limpa ao operador);
+      // `error` fica só para falha inesperada.
       if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
-        return { success: false, error: 'Senha incorreta.' }
+        return { success: false, message: 'Senha incorreta.' }
       }
       return { success: true, closures: dbOperations.listShiftClosures(30) }
     } catch (error) {
@@ -487,7 +489,7 @@ app.whenReady().then(() => {
     (_event, data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => {
       try {
         if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
-          return { success: false, error: 'Senha incorreta.' }
+          return { success: false, message: 'Senha incorreta.' }
         }
         return dbOperations.confirmShiftClosure(data.id, {
           operatorName: data.operatorName,
