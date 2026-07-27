@@ -130,6 +130,28 @@ porque o caminho do scratchpad tinha 255 caracteres (limite do Windows). Em cami
 **rede de segurança**: se `db.backup()` falhar, o app faz `wal_checkpoint(TRUNCATE)` e cai
 para a cópia direta do arquivo — nunca fica sem backup.
 
+## 13b — EXECUTADA (27/07/2026) e verificada no app real
+
+Mesmo banco de 18 meses (46 MB), app real, primeira abertura:
+
+```
+[db] sync_log: 153000 registros antigos removidos.
+[db] compactando o banco (33 MB livres)...
+[db] banco compactado em 135 ms.
+```
+
+| Antes | Depois |
+|---|---|
+| Banco 46 MB | **13 MB (−72%)** |
+| sync_log 162.000 linhas | 9.000 linhas (30 dias + folga de 5.000) |
+| 10 backups (≈464 MB) | 5 backups (≈65 MB com o banco menor) |
+
+**Dados preservados:** 54.018 tickets e 1.620 pagamentos intactos,
+`integrity_check = ok`, `journal_mode = wal`. Na **segunda abertura não há
+nenhuma poda ou compactação** (idempotente) — o custo é só uma vez, e o VACUUM
+levou 135 ms mesmo em banco grande, rodando 15 s depois da abertura para não
+somar ao tempo de startup.
+
 ## Ordem sugerida e verificação
 
 | # | Item | Verificação |

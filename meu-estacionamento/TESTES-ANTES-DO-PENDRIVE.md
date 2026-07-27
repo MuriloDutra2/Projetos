@@ -61,6 +61,8 @@
 - [ ] **Aba Financeiro:** abre rápido em mês cheio; a tabela mostra 100 linhas com rodapé "Mostrando 100 de N" e botão "Mostrar mais 100". **Os totais no topo continuam do mês inteiro** e o CSV exporta o mês completo.
 - [ ] **Aba Veículos excluídos:** abre rápido e pagina igual.
 - [ ] **Sem "não está respondendo":** usar o app por alguns minutos sem o aviso do Windows aparecer.
+- [ ] **Limpeza do banco (Fase 13b):** anotar o tamanho de `%APPDATA%\KF Estacionamento\parking.db` ANTES de instalar. Na primeira abertura da versão nova, o app poda o log de sincronismo e compacta o arquivo (leva segundos, 15 s após abrir) — conferir depois que o arquivo diminuiu e que **mensalistas, pátio e histórico continuam completos**.
+- [ ] **Backups:** a pasta `backups\` passa a guardar 5 cópias (eram 10) e cada uma é bem menor.
 - [ ] **Aviso de pendência sem expor dados:** com um fechamento automático pendente, a área bloqueada mostra "N fechamento(s) automático(s) aguardando confirmação do gerente" SEM mostrar valores; a confirmação só funciona com o histórico desbloqueado.
 
 ### 4. Dados persistentes
