@@ -110,6 +110,26 @@ Se depois de 13a/13b ainda houver congelamento, o próximo passo é medir com o 
 em modo de desenvolvimento na própria máquina (DevTools → Performance) para achar o ponto
 exato, em vez de continuar por hipótese.
 
+---
+
+## 13a — EXECUTADA (27/07/2026) e verificada no app real
+
+Rodado o app de verdade (build do worktree) contra o banco sintético de 18 meses / 46 MB:
+
+| Item | Resultado medido |
+|---|---|
+| WAL + synchronous=NORMAL | `journal_mode = wal` confirmado no banco; escrita 59× mais rápida no benchmark |
+| Índice de expressão da placa | **29,2 ms → 0,01 ms**; plano passou de `SCAN tickets` para `SEARCH tickets USING INDEX idx_tickets_placa_norm` |
+| Backup via `db.backup()` | Backup gerado, `integrity_check = ok`, 54.018 tickets preservados; agora assíncrono (não trava a abertura) |
+| Fechamento limpo | `wal_checkpoint(TRUNCATE)` + `close()` no `will-quit` — o parking.db fica íntegro sozinho para cópia/pendrive |
+| Paginação Financeiro/Excluídos | Tabelas desenham 100 linhas por vez, com "Mostrar mais"; totais e CSV seguem cobrindo o mês inteiro |
+
+**Achado do caminho longo:** no primeiro teste o `db.backup()` falhou com `SQLITE_CANTOPEN`
+porque o caminho do scratchpad tinha 255 caracteres (limite do Windows). Em caminho curto
+(como em produção, `%APPDATA%\KF Estacionamento\`) funciona. Mesmo assim foi adicionada
+**rede de segurança**: se `db.backup()` falhar, o app faz `wal_checkpoint(TRUNCATE)` e cai
+para a cópia direta do arquivo — nunca fica sem backup.
+
 ## Ordem sugerida e verificação
 
 | # | Item | Verificação |

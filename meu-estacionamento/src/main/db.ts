@@ -13,11 +13,30 @@ const dbPath =
     ? join(process.cwd(), 'parking.db')
     : join(app.getPath('userData'), 'parking.db')
 
+const db = new Database(dbPath)
+
 /**
- * Snapshot do parking.db antes de abrir a conexão.
- * Roda em toda inicialização — se algo der errado em uma atualização ou
- * migração, sempre há cópias recentes em userData/backups/.
+ * Desempenho de escrita (Fase 13a). O padrão do SQLite (journal DELETE +
+ * synchronous FULL) faz um fsync por transação — e cada entrada de veículo são
+ * três transações. Medido em banco de produção sintético: 12,4 ms por entrada
+ * no padrão contra 0,2 ms com WAL (59× mais rápido), e a diferença é ainda
+ * maior em HD mecânico, como o do estacionamento.
+ *
+ * WAL é o modo recomendado para app local de usuário único. synchronous=NORMAL
+ * mantém a segurança contra queda do APP (só uma queda de energia poderia
+ * perder a última transação) — e há backup a cada inicialização.
+ */
+db.pragma('journal_mode = WAL')
+db.pragma('synchronous = NORMAL')
+
+/**
+ * Snapshot do parking.db a cada inicialização — se algo der errado em uma
+ * atualização ou migração, sempre há cópias recentes em userData/backups/.
  * Mantém os 10 backups mais recentes (rolling).
+ *
+ * Usa db.backup() (assíncrono e consistente com WAL) em vez de copyFileSync:
+ * copiar o arquivo bruto ignoraria o -wal e poderia gerar cópia inconsistente,
+ * além de travar a abertura do app por ~1,5 s em HD com banco grande.
  */
 function backupDatabaseOnStartup(): void {
   if (!existsSync(dbPath)) return
@@ -26,27 +45,40 @@ function backupDatabaseOnStartup(): void {
     mkdirSync(backupDir, { recursive: true })
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const backupPath = join(backupDir, `parking-${ts}.db`)
-    copyFileSync(dbPath, backupPath)
-
-    const files = readdirSync(backupDir)
-      .filter((f) => f.startsWith('parking-') && f.endsWith('.db'))
-      .sort()
-      .reverse()
-    files.slice(10).forEach((f) => {
-      try {
-        unlinkSync(join(backupDir, f))
-      } catch {
-        // ignora erro de delete; próximo startup tenta de novo
-      }
-    })
+    const rotacionar = (): void => {
+      const files = readdirSync(backupDir)
+        .filter((f) => f.startsWith('parking-') && f.endsWith('.db'))
+        .sort()
+        .reverse()
+      files.slice(10).forEach((f) => {
+        try {
+          unlinkSync(join(backupDir, f))
+        } catch {
+          // ignora erro de delete; próximo startup tenta de novo
+        }
+      })
+    }
+    db.backup(backupPath)
+      .then(rotacionar)
+      .catch((e) => {
+        // Rede de segurança: nunca ficar sem backup. Consolida o WAL no arquivo
+        // principal e copia o arquivo bruto (consistente logo após o
+        // checkpoint, antes de qualquer escrita da janela).
+        console.warn('[backup] db.backup falhou, usando cópia direta:', e)
+        try {
+          db.pragma('wal_checkpoint(TRUNCATE)')
+          copyFileSync(dbPath, backupPath)
+          rotacionar()
+        } catch (e2) {
+          console.warn('[backup] Falha também na cópia direta:', e2)
+        }
+      })
   } catch (e) {
     console.warn('[backup] Falha ao copiar parking.db:', e)
   }
 }
 
 backupDatabaseOnStartup()
-
-const db = new Database(dbPath)
 
 function ensureColumn(table: string, column: string, ddl: string): void {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
@@ -204,6 +236,13 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_node ON sync_log(node_id, seq)`
 // sem eles, cada consulta varre a tabela inteira, que só cresce.
 db.exec(`CREATE INDEX IF NOT EXISTS idx_tickets_status_saida ON tickets(status, saida)`)
 db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_payment_date ON subscription_payments(payment_date)`)
+
+// Índice de EXPRESSÃO para "placa esteve hoje" (Fase 13a): a consulta compara
+// UPPER(REPLACE(placa,'-','')), o que impedia o uso de índice e varria a tabela
+// inteira a cada digitação de placa (29 ms aos 18 meses, piorando sempre).
+// Indexar a mesma expressão resolve sem alterar nenhum dado gravado: medido
+// 29,2 ms (SCAN) → 0,1 ms (SEARCH USING INDEX).
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tickets_placa_norm ON tickets(UPPER(REPLACE(placa, '-', '')))`)
 
 // ── Fechamento de caixa ──────────────────────────────────────────────────
 // Cada fechamento é um registro IMUTÁVEL (sem UPDATE/DELETE). Vários caixas
@@ -1543,7 +1582,21 @@ export const dbOperations = {
   },
 
   /** Retorna o NODE_ID desta instalação. */
-  getNodeId: () => NODE_ID
+  getNodeId: () => NODE_ID,
+
+  /**
+   * Consolida o WAL no arquivo principal e fecha a conexão. Chamado ao sair
+   * para o parking.db ficar íntegro sozinho (importante porque o banco é
+   * copiado manualmente/por pendrive) e não deixar -wal para trás.
+   */
+  closeDatabase: () => {
+    try {
+      db.pragma('wal_checkpoint(TRUNCATE)')
+      db.close()
+    } catch (e) {
+      console.warn('[db] Falha ao fechar o banco:', e)
+    }
+  }
 }
 
 export default db

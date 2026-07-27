@@ -11,9 +11,16 @@ export default function Excluidos(): React.JSX.Element {
     saida: string
   }[]>([])
 
+  // Mostra em blocos: a lista cobre todo o histórico de exclusões e montar
+  // tudo de uma vez congelava a tela em máquina antiga (Fase 13a).
+  const PAGINA = 100
+  const [visiveis, setVisiveis] = useState(PAGINA)
+
   useEffect(() => {
     getExcludedTickets().then(setExcludedTickets).catch(console.error)
   }, [])
+
+  const visiveisLista = excludedTickets.slice(0, visiveis)
 
   return (
     <div className="flex-1 p-6 overflow-y-auto">
@@ -36,7 +43,7 @@ export default function Excluidos(): React.JSX.Element {
                   <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhum veículo excluído</td>
                 </tr>
               ) : (
-                excludedTickets.map((t) => (
+                visiveisLista.map((t) => (
                   <tr key={t.id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                     <td className="px-4 py-3 font-medium text-white">{t.placa}</td>
                     <td className="px-4 py-3 text-gray-300">{t.tipo}</td>
@@ -48,6 +55,20 @@ export default function Excluidos(): React.JSX.Element {
             </tbody>
           </table>
         </div>
+        {excludedTickets.length > visiveis && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-gray-700 bg-gray-800/60">
+            <p className="text-xs text-gray-400">
+              Mostrando {visiveisLista.length} de {excludedTickets.length} exclusões
+            </p>
+            <button
+              type="button"
+              onClick={() => setVisiveis((n) => n + PAGINA)}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium text-white whitespace-nowrap"
+            >
+              Mostrar mais {PAGINA}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -31,6 +31,14 @@ export default function Financeiro(): React.JSX.Element {
     [monthData]
   )
 
+  // Mostra a tabela em blocos: um mês cheio pode ter milhares de transações e
+  // montar tudo de uma vez congelava a tela em máquina antiga (Fase 13a).
+  // Os TOTAIS acima continuam vindo do SQL sobre o mês inteiro, e o CSV
+  // também exporta o mês completo — o limite é só do que se desenha na tela.
+  const PAGINA = 100
+  const [visiveis, setVisiveis] = useState(PAGINA)
+  const transacoesVisiveis = mixedTransactions.slice(0, visiveis)
+
   return (
     <div className="flex-1 p-6 overflow-y-auto">
       <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
@@ -38,7 +46,10 @@ export default function Financeiro(): React.JSX.Element {
         <div className="flex items-center gap-2">
           <select
             value={financeFilterMonth}
-            onChange={(e) => setFinanceFilterMonth(Number(e.target.value))}
+            onChange={(e) => {
+              setFinanceFilterMonth(Number(e.target.value))
+              setVisiveis(PAGINA)
+            }}
             className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
           >
             {MESES.map((m, i) => (
@@ -49,7 +60,10 @@ export default function Financeiro(): React.JSX.Element {
           </select>
           <select
             value={financeFilterYear}
-            onChange={(e) => setFinanceFilterYear(Number(e.target.value))}
+            onChange={(e) => {
+              setFinanceFilterYear(Number(e.target.value))
+              setVisiveis(PAGINA)
+            }}
             className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm"
           >
             {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map((y) => (
@@ -111,7 +125,7 @@ export default function Financeiro(): React.JSX.Element {
                   <td colSpan={4} className="px-4 py-8 text-center text-gray-500">Nenhuma transação</td>
                 </tr>
               ) : (
-                mixedTransactions.map((t, i) => (
+                transacoesVisiveis.map((t, i) => (
                   <tr key={`${t.type}-${t.date}-${i}`} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                     <td className="px-4 py-3 text-gray-300">{format(new Date(t.date), 'dd/MM/yyyy HH:mm')}</td>
                     <td className="px-4 py-3">
@@ -134,6 +148,21 @@ export default function Financeiro(): React.JSX.Element {
             </tbody>
           </table>
         </div>
+        {mixedTransactions.length > visiveis && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-gray-700 bg-gray-800/60">
+            <p className="text-xs text-gray-400">
+              Mostrando {transacoesVisiveis.length} de {mixedTransactions.length} transações do mês
+              (os totais acima já consideram o mês inteiro).
+            </p>
+            <button
+              type="button"
+              onClick={() => setVisiveis((n) => n + PAGINA)}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium text-white whitespace-nowrap"
+            >
+              Mostrar mais {PAGINA}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
