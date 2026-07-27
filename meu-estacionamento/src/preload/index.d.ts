@@ -117,6 +117,9 @@ declare global {
       } | null>
       getShiftClosures: (data: { password: string }) => Promise<{
         success: boolean
+        /** Aviso esperado (senha errada) — exibir como está. */
+        message?: string
+        /** Falha inesperada — passar pelo friendlyError. */
         error?: string
         closures?: {
           id: number
@@ -139,7 +142,7 @@ declare global {
           confirmed_at: string | null
         }[]
       }>
-      confirmShiftClosure: (data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => Promise<{ success: boolean; error?: string }>
+      confirmShiftClosure: (data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => Promise<{ success: boolean; message?: string; error?: string }>
       closeShift: (data: { cashCounted?: number | null; operatorName?: string }) => Promise<{
         success: boolean
         closure?: {
@@ -162,6 +165,8 @@ declare global {
           confirmed_by: string | null
           confirmed_at: string | null
         }
+        /** Aviso esperado (ex.: caixa sem movimento) — exibir como está. */
+        message?: string
         error?: string
       }>
       printShiftClosure: (data: unknown) => Promise<{ success: boolean; error?: string }>

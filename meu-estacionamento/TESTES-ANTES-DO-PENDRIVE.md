@@ -53,6 +53,16 @@
 - [ ] **Confirmar caixa automático:** clicar em "Confirmar caixa" na linha vermelha → operador obrigatório, dinheiro contado opcional; após confirmar, a linha sai do vermelho e mostra "Automático · confirmado por X".
 - [ ] **Catch-up:** fechar o app antes da virada e reabrir depois → o fechamento automático da virada perdida é criado no startup, com o corte na hora exata da virada.
 - [ ] **Histórico restrito ao gerente:** a seção "Fechamentos anteriores" aparece BLOQUEADA (cadeado + campo de senha); senha errada é recusada; a senha de excluir veículos (161021) libera a lista. Sair da aba e voltar → bloqueia de novo.
+
+### 3d. Desempenho (Fase 13a — jul/2026)
+- [ ] **Abertura:** o app abre sem congelar (o backup agora roda em segundo plano). Conferir que surgiu arquivo novo em `%APPDATA%\KF Estacionamento\backups\`.
+- [ ] **Arquivos do banco:** com o app ABERTO existem `parking.db`, `parking.db-wal` e `parking.db-shm`. Ao FECHAR pelo X, o `-wal` some (banco íntegro sozinho para copiar/pendrive).
+- [ ] **Entrada de veículo:** digitar a placa e registrar responde na hora (antes travava a cada digitação).
+- [ ] **Aba Financeiro:** abre rápido em mês cheio; a tabela mostra 100 linhas com rodapé "Mostrando 100 de N" e botão "Mostrar mais 100". **Os totais no topo continuam do mês inteiro** e o CSV exporta o mês completo.
+- [ ] **Aba Veículos excluídos:** abre rápido e pagina igual.
+- [ ] **Sem "não está respondendo":** usar o app por alguns minutos sem o aviso do Windows aparecer.
+- [ ] **Limpeza do banco (Fase 13b):** anotar o tamanho de `%APPDATA%\KF Estacionamento\parking.db` ANTES de instalar. Na primeira abertura da versão nova, o app poda o log de sincronismo e compacta o arquivo (leva segundos, 15 s após abrir) — conferir depois que o arquivo diminuiu e que **mensalistas, pátio e histórico continuam completos**.
+- [ ] **Backups:** a pasta `backups\` passa a guardar 5 cópias (eram 10) e cada uma é bem menor.
 - [ ] **Aviso de pendência sem expor dados:** com um fechamento automático pendente, a área bloqueada mostra "N fechamento(s) automático(s) aguardando confirmação do gerente" SEM mostrar valores; a confirmação só funciona com o histórico desbloqueado.
 
 ### 4. Dados persistentes

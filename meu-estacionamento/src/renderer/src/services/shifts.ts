@@ -77,14 +77,14 @@ export async function getShiftOverview(): Promise<ShiftOverview | null> {
 export async function closeShift(data: {
   cashCounted?: number | null
   operatorName?: string
-}): Promise<{ success: boolean; closure?: ShiftClosure; error?: string }> {
+}): Promise<{ success: boolean; closure?: ShiftClosure; message?: string; error?: string }> {
   return window.api.closeShift(data)
 }
 
 /** Lista de fechamentos — área restrita do gerente (senha validada no processo main). */
 export async function getShiftClosures(data: {
   password: string
-}): Promise<{ success: boolean; error?: string; closures?: ShiftClosure[] }> {
+}): Promise<{ success: boolean; message?: string; error?: string; closures?: ShiftClosure[] }> {
   return window.api.getShiftClosures(data)
 }
 
@@ -94,7 +94,7 @@ export async function confirmShiftClosure(data: {
   operatorName: string
   cashCounted?: number | null
   password: string
-}): Promise<{ success: boolean; error?: string }> {
+}): Promise<{ success: boolean; message?: string; error?: string }> {
   return window.api.confirmShiftClosure(data)
 }
 

@@ -13,12 +13,34 @@ const dbPath =
     ? join(process.cwd(), 'parking.db')
     : join(app.getPath('userData'), 'parking.db')
 
+const db = new Database(dbPath)
+
 /**
- * Snapshot do parking.db antes de abrir a conexão.
- * Roda em toda inicialização — se algo der errado em uma atualização ou
- * migração, sempre há cópias recentes em userData/backups/.
- * Mantém os 10 backups mais recentes (rolling).
+ * Desempenho de escrita (Fase 13a). O padrão do SQLite (journal DELETE +
+ * synchronous FULL) faz um fsync por transação — e cada entrada de veículo são
+ * três transações. Medido em banco de produção sintético: 12,4 ms por entrada
+ * no padrão contra 0,2 ms com WAL (59× mais rápido), e a diferença é ainda
+ * maior em HD mecânico, como o do estacionamento.
+ *
+ * WAL é o modo recomendado para app local de usuário único. synchronous=NORMAL
+ * mantém a segurança contra queda do APP (só uma queda de energia poderia
+ * perder a última transação) — e há backup a cada inicialização.
  */
+db.pragma('journal_mode = WAL')
+db.pragma('synchronous = NORMAL')
+
+/**
+ * Snapshot do parking.db a cada inicialização — se algo der errado em uma
+ * atualização ou migração, sempre há cópias recentes em userData/backups/.
+ * Mantém os 5 backups mais recentes (rolling) — eram 10, reduzido na Fase 13b
+ * porque em banco grande isso ocupava centenas de MB num notebook antigo.
+ *
+ * Usa db.backup() (assíncrono e consistente com WAL) em vez de copyFileSync:
+ * copiar o arquivo bruto ignoraria o -wal e poderia gerar cópia inconsistente,
+ * além de travar a abertura do app por ~1,5 s em HD com banco grande.
+ */
+const BACKUPS_MANTIDOS = 5
+
 function backupDatabaseOnStartup(): void {
   if (!existsSync(dbPath)) return
   try {
@@ -26,27 +48,40 @@ function backupDatabaseOnStartup(): void {
     mkdirSync(backupDir, { recursive: true })
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const backupPath = join(backupDir, `parking-${ts}.db`)
-    copyFileSync(dbPath, backupPath)
-
-    const files = readdirSync(backupDir)
-      .filter((f) => f.startsWith('parking-') && f.endsWith('.db'))
-      .sort()
-      .reverse()
-    files.slice(10).forEach((f) => {
-      try {
-        unlinkSync(join(backupDir, f))
-      } catch {
-        // ignora erro de delete; próximo startup tenta de novo
-      }
-    })
+    const rotacionar = (): void => {
+      const files = readdirSync(backupDir)
+        .filter((f) => f.startsWith('parking-') && f.endsWith('.db'))
+        .sort()
+        .reverse()
+      files.slice(BACKUPS_MANTIDOS).forEach((f) => {
+        try {
+          unlinkSync(join(backupDir, f))
+        } catch {
+          // ignora erro de delete; próximo startup tenta de novo
+        }
+      })
+    }
+    db.backup(backupPath)
+      .then(rotacionar)
+      .catch((e) => {
+        // Rede de segurança: nunca ficar sem backup. Consolida o WAL no arquivo
+        // principal e copia o arquivo bruto (consistente logo após o
+        // checkpoint, antes de qualquer escrita da janela).
+        console.warn('[backup] db.backup falhou, usando cópia direta:', e)
+        try {
+          db.pragma('wal_checkpoint(TRUNCATE)')
+          copyFileSync(dbPath, backupPath)
+          rotacionar()
+        } catch (e2) {
+          console.warn('[backup] Falha também na cópia direta:', e2)
+        }
+      })
   } catch (e) {
     console.warn('[backup] Falha ao copiar parking.db:', e)
   }
 }
 
 backupDatabaseOnStartup()
-
-const db = new Database(dbPath)
 
 function ensureColumn(table: string, column: string, ddl: string): void {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
@@ -204,6 +239,72 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_sync_log_node ON sync_log(node_id, seq)`
 // sem eles, cada consulta varre a tabela inteira, que só cresce.
 db.exec(`CREATE INDEX IF NOT EXISTS idx_tickets_status_saida ON tickets(status, saida)`)
 db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_payment_date ON subscription_payments(payment_date)`)
+
+// Índice de EXPRESSÃO para "placa esteve hoje" (Fase 13a): a consulta compara
+// UPPER(REPLACE(placa,'-','')), o que impedia o uso de índice e varria a tabela
+// inteira a cada digitação de placa (29 ms aos 18 meses, piorando sempre).
+// Indexar a mesma expressão resolve sem alterar nenhum dado gravado: medido
+// 29,2 ms (SCAN) → 0,1 ms (SEARCH USING INDEX).
+db.exec(`CREATE INDEX IF NOT EXISTS idx_tickets_placa_norm ON tickets(UPPER(REPLACE(placa, '-', '')))`)
+
+/**
+ * Poda do sync_log (Fase 13b). O log de replicação cresce a cada escrita e
+ * medimos que ele chegava a 63% do arquivo (29 MB de 46 MB em 18 meses),
+ * encarecendo backup, cópia para pendrive e o próprio uso do disco.
+ *
+ * Mantém tudo dos últimos 30 dias E, independentemente da idade, os últimos
+ * 5.000 registros — essa folga é o que permitiria a um segundo PC voltar a
+ * sincronizar depois de dias desligado.
+ *
+ * ATENÇÃO se o sync LAN entrar em produção: um nó que fique fora do ar por
+ * mais de 30 dias (ou mais de 5.000 escritas) perderia o ponto de partida e
+ * precisaria de uma ressincronização completa. Se isso virar realidade,
+ * guardar aqui o menor `seq` já confirmado pelos outros nós e nunca podar
+ * acima dele.
+ */
+const SYNC_LOG_MANTER_LINHAS = 5000
+const SYNC_LOG_MANTER_DIAS = 30
+
+function podarSyncLog(): number {
+  try {
+    const maxSeq = (db.prepare('SELECT COALESCE(MAX(seq), 0) as m FROM sync_log').get() as { m: number }).m
+    if (maxSeq <= SYNC_LOG_MANTER_LINHAS) return 0
+    const corteSeq = maxSeq - SYNC_LOG_MANTER_LINHAS
+    const corteData = new Date(Date.now() - SYNC_LOG_MANTER_DIAS * 24 * 60 * 60 * 1000).toISOString()
+    const r = db.prepare('DELETE FROM sync_log WHERE seq <= ? AND timestamp < ?').run(corteSeq, corteData)
+    if (r.changes > 0) console.log(`[db] sync_log: ${r.changes} registros antigos removidos.`)
+    return r.changes
+  } catch (e) {
+    console.warn('[db] Falha ao podar o sync_log:', e)
+    return 0
+  }
+}
+
+/**
+ * Compacta o arquivo (VACUUM) para devolver ao disco o espaço liberado pela
+ * poda. Roda uma única vez, alguns segundos após a abertura (para não somar
+ * ao tempo de startup) e só quando há espaço livre relevante — nas próximas
+ * aberturas não há mais nada a fazer.
+ */
+function compactarSeNecessario(): void {
+  try {
+    const livres = db.pragma('freelist_count', { simple: true }) as number
+    const tamanhoPagina = db.pragma('page_size', { simple: true }) as number
+    const bytesLivres = livres * tamanhoPagina
+    if (bytesLivres < 8 * 1024 * 1024) return
+    console.log(`[db] compactando o banco (${Math.round(bytesLivres / 1048576)} MB livres)...`)
+    const inicio = Date.now()
+    db.exec('VACUUM')
+    console.log(`[db] banco compactado em ${Date.now() - inicio} ms.`)
+  } catch (e) {
+    console.warn('[db] VACUUM falhou (será tentado na próxima abertura):', e)
+  }
+}
+
+podarSyncLog()
+// Compactação adiada: não soma ao tempo de abertura e, na prática, só roda
+// uma vez (depois da primeira poda não sobra espaço livre relevante).
+setTimeout(compactarSeNecessario, 15000).unref?.()
 
 // ── Fechamento de caixa ──────────────────────────────────────────────────
 // Cada fechamento é um registro IMUTÁVEL (sem UPDATE/DELETE). Vários caixas
@@ -1349,7 +1450,7 @@ export const dbOperations = {
     const live = dbOperations.getShiftTotals(windowStart, closedAt)
     const cashCounted = data.cashCounted ?? null
     if (live.total === 0 && cashCounted == null) {
-      return { success: false as const, error: 'Não há movimento neste caixa para fechar.' }
+      return { success: false as const, message: 'Não há movimento neste caixa para fechar.' }
     }
     try {
       const closure = insertShiftClosureRecord(shift, windowStart, closedAt, closedAt, live, {
@@ -1417,12 +1518,13 @@ export const dbOperations = {
    * shift_closures — os totais permanecem imutáveis.
    */
   confirmShiftClosure: (id: number, data: { operatorName: string; cashCounted?: number | null }) => {
+    // Validações esperadas vão em `message` (exibidas limpas ao operador).
     const operator = data.operatorName?.trim()
-    if (!operator) return { success: false as const, error: 'Informe o nome de quem confirma.' }
+    if (!operator) return { success: false as const, message: 'Informe o nome de quem confirma.' }
     const row = stmts.getShiftClosureById.get(id) as ShiftClosureRow | undefined
-    if (!row) return { success: false as const, error: 'Fechamento não encontrado.' }
-    if (!row.auto_closed) return { success: false as const, error: 'Este fechamento já foi feito manualmente.' }
-    if (row.confirmed_at) return { success: false as const, error: 'Este fechamento já foi confirmado.' }
+    if (!row) return { success: false as const, message: 'Fechamento não encontrado.' }
+    if (!row.auto_closed) return { success: false as const, message: 'Este fechamento já foi feito manualmente.' }
+    if (row.confirmed_at) return { success: false as const, message: 'Este fechamento já foi confirmado.' }
     const confirmedAt = new Date().toISOString()
     const cashCounted = data.cashCounted ?? null
     const cashDifference =
@@ -1543,7 +1645,21 @@ export const dbOperations = {
   },
 
   /** Retorna o NODE_ID desta instalação. */
-  getNodeId: () => NODE_ID
+  getNodeId: () => NODE_ID,
+
+  /**
+   * Consolida o WAL no arquivo principal e fecha a conexão. Chamado ao sair
+   * para o parking.db ficar íntegro sozinho (importante porque o banco é
+   * copiado manualmente/por pendrive) e não deixar -wal para trás.
+   */
+  closeDatabase: () => {
+    try {
+      db.pragma('wal_checkpoint(TRUNCATE)')
+      db.close()
+    } catch (e) {
+      console.warn('[db] Falha ao fechar o banco:', e)
+    }
+  }
 }
 
 export default db

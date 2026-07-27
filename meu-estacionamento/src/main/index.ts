@@ -472,8 +472,10 @@ app.whenReady().then(() => {
   // apenas um bloqueio visual no renderer.
   ipcMain.handle('get-shift-closures', (_event, data: { password: string }) => {
     try {
+      // Validação esperada vai em `message` (exibida limpa ao operador);
+      // `error` fica só para falha inesperada.
       if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
-        return { success: false, error: 'Senha incorreta.' }
+        return { success: false, message: 'Senha incorreta.' }
       }
       return { success: true, closures: dbOperations.listShiftClosures(30) }
     } catch (error) {
@@ -487,7 +489,7 @@ app.whenReady().then(() => {
     (_event, data: { id: number; operatorName: string; cashCounted?: number | null; password: string }) => {
       try {
         if (data?.password !== EXCLUDE_TICKET_PASSWORD) {
-          return { success: false, error: 'Senha incorreta.' }
+          return { success: false, message: 'Senha incorreta.' }
         }
         return dbOperations.confirmShiftClosure(data.id, {
           operatorName: data.operatorName,
@@ -1006,6 +1008,12 @@ app.whenReady().then(() => {
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
+app.on('will-quit', () => {
+  // Consolida o WAL e fecha o banco: o parking.db fica íntegro sozinho
+  // (é copiado manualmente/por pendrive) e sem arquivos -wal soltos.
+  dbOperations.closeDatabase()
+})
+
 app.on('window-all-closed', () => {
   stopSyncServer()
   if (process.platform !== 'darwin') {
