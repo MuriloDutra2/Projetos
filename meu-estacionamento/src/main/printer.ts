@@ -99,9 +99,22 @@ function getBaseOptions(): Record<string, unknown> {
 const PRINT_TIMEOUT_MS = 30000
 
 /**
+ * Impressão desligada nas Configurações? Então nenhum fluxo toca a impressora.
+ *
+ * Sem impressora conectada, a chamada ao spooler do Windows pode ficar pendurada
+ * e travar o processo principal — e o timeout abaixo só rejeita a promessa, não
+ * cancela a chamada nativa já em andamento. Por isso a checagem acontece ANTES
+ * de qualquer contato com a API de impressão.
+ */
+export function isPrintingEnabled(): boolean {
+  return getConfig().printingEnabled !== false
+}
+
+/**
  * Envolve a impressão com timeout e tratamento de erro para falhas do Spooler/timeout.
  */
 async function runPrint(printFn: () => Promise<unknown>): Promise<void> {
+  if (!isPrintingEnabled()) return
   let timeoutId: ReturnType<typeof setTimeout> | null = null
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {

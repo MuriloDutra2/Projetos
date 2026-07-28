@@ -172,6 +172,8 @@ declare global {
       printShiftClosure: (data: unknown) => Promise<{ success: boolean; error?: string }>
       getPrinters: () => Promise<{ name: string; displayName: string }[]>
       getPrinterConfig: () => Promise<string>
+      getPrintingEnabled: () => Promise<boolean>
+      setPrintingEnabled: (enabled: boolean) => Promise<{ success: boolean }>
       savePrinterConfig: (printerName: string) => Promise<{ success: boolean }>
       toggleClientStatus: (data: { clientId: number; active: number }) => Promise<{ success: boolean; error?: string }>
       deleteClient: (data: { clientId: number; password: string }) => Promise<{ success: boolean; error?: string }>

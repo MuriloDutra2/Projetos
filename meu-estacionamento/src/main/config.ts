@@ -6,6 +6,14 @@ const configPath = () => join(app.getPath('userData'), 'config.json')
 
 export interface AppConfig {
   printerName?: string
+  /**
+   * Impressão térmica ligada. Quando `false`, o app NÃO chama a impressora em
+   * nenhum fluxo — nem para procurar uma. Existe porque, sem impressora
+   * conectada, o Windows fica tentando alcançá-la e o app congela
+   * ("Electron não está respondendo") no meio do registro de entrada.
+   * Padrão: ligada, para não mudar o comportamento de quem usa a térmica.
+   */
+  printingEnabled?: boolean
   /** Hora local (0-23) em que começa o turno diurno do caixa. Padrão: 7. */
   shiftDayStartHour?: number
   /** Hora local (0-23) em que começa o turno noturno do caixa. Padrão: 19. */

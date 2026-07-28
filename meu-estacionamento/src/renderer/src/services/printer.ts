@@ -35,3 +35,12 @@ export async function getPrinterConfig(): Promise<string> {
 export async function savePrinterConfig(printerName: string): Promise<{ success: boolean }> {
   return window.api.savePrinterConfig(printerName)
 }
+
+/** Impressão térmica ligada? Desligada, nenhum fluxo chama a impressora. */
+export async function getPrintingEnabled(): Promise<boolean> {
+  return window.api.getPrintingEnabled()
+}
+
+export async function setPrintingEnabled(enabled: boolean): Promise<{ success: boolean }> {
+  return window.api.setPrintingEnabled(enabled)
+}

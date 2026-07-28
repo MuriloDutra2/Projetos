@@ -188,10 +188,17 @@ export default function FechamentoCaixa(): React.JSX.Element {
               'Fechamento registrado. Um novo caixa já está aberto. Imprimindo comprovante...',
               'success'
             )
-            const printRes = await printShiftClosure(closureToPrintData(res.closure))
-            if (!printRes.success) {
-              showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
-            }
+            // Impressão NÃO bloqueia: o fechamento já está gravado e imutável.
+            printShiftClosure(closureToPrintData(res.closure))
+              .then((printRes) => {
+                if (!printRes.success) {
+                  showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+                }
+              })
+              .catch((err) => {
+                console.error(err)
+                showAlert('Erro de impressão', friendlyError(err), 'error')
+              })
           } else if (res.message) {
             showAlert('Atenção', res.message, 'error')
           } else {
