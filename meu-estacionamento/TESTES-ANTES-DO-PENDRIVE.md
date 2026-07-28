@@ -65,6 +65,8 @@
 - [ ] **Backups:** a pasta `backups\` passa a guardar 5 cópias (eram 10) e cada uma é bem menor.
 - [ ] **Desligar a impressora (Fase 13c):** em Configurações → Impressora, desligar "Usar impressora térmica". Registrar uma entrada → deve ser **instantânea, sem espera e sem aviso de erro de impressão**. A lista de impressoras some enquanto está desligada.
 - [ ] **Religar a impressora:** ligar o interruptor de volta → a lista de impressoras reaparece e os tickets voltam a imprimir normalmente (testar com a térmica conectada).
+- [ ] **Impressão não trava mais (Fase 13c):** com a impressora LIGADA e conectada, registrar entrada e saída → a tela deve liberar na hora e o ticket sair logo depois (não mais "REGISTRANDO..." parado esperando).
+- [ ] **Falha de impressão avisa depois:** com a impressora ligada mas DESCONECTADA, registrar uma entrada → o veículo entra no pátio na hora e o aviso de erro de impressão aparece alguns segundos depois (comportamento novo e esperado).
 - [ ] **Aviso de pendência sem expor dados:** com um fechamento automático pendente, a área bloqueada mostra "N fechamento(s) automático(s) aguardando confirmação do gerente" SEM mostrar valores; a confirmação só funciona com o histórico desbloqueado.
 
 ### 4. Dados persistentes

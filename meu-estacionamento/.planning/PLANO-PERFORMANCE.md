@@ -179,10 +179,25 @@ spooler (essa consulta trava do mesmo jeito).
 `getPrinters()` devolve lista vazia e `print-entry` responde `{success: true}` sem
 imprimir — nenhum alerta falso de erro para o operador.
 
-**Melhoria futura (não feita agora):** tornar a impressão não-bloqueante (disparar e seguir,
-mostrando eventual falha depois). Resolveria o congelamento mesmo com a impressora ligada
-e travada — mas muda o momento em que o operador vê o erro, então precisa de decisão da
-operação.
+### Impressão não-bloqueante (aprovada e feita em 28/07)
+
+Além do interruptor, os quatro fluxos que imprimem (entrada, saída, renovação e fechamento
+de caixa) deixaram de esperar a impressora: o registro é gravado, a tela libera na hora e o
+comprovante sai em seguida. Falha de impressão vira aviso alguns segundos depois, em vez de
+prender o operador.
+
+| Registro de entrada | Antes | Depois |
+|---|---|---|
+| Impressão **ligada** | 3.873 ms | **125 ms** |
+| Impressão **desligada** | — | **53 ms** |
+
+Em ambos os casos o veículo entra no pátio corretamente. **Contrapartida aceita:** o aviso de
+falha de impressão chega depois da ação (e pode aparecer enquanto o operador já começou a
+próxima) — antes ele vinha travando a tela. Com a impressora desligada não há aviso nenhum.
+
+**Risco residual conhecido:** com a impressora ligada e falhando, cada operação gera um aviso
+alguns segundos depois. Se isso incomodar na prática, o próximo passo é trocar o alerta modal
+por um aviso discreto (toast) — não foi feito para não inventar componente novo sem pedido.
 
 ## Ordem sugerida e verificação
 

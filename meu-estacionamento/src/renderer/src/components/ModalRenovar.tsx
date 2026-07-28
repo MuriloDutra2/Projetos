@@ -104,13 +104,15 @@ export default function ModalRenovar({
         splitPayment
       })
       if (result.success) {
-        try {
-          const cpfFormatted =
-            clientCpf && clientCpf.replace(/\D/g, '').length === 11
-              ? maskCPF(clientCpf)
-              : clientCpf || '-'
-          const phoneFormatted = clientPhone ? maskPhone(clientPhone) : '-'
-          const printRes = await window.api.printSubscription({
+        // Impressão NÃO bloqueia: o pagamento já está registrado. O recibo sai
+        // em seguida e, se a impressora falhar, o aviso chega depois.
+        const cpfFormatted =
+          clientCpf && clientCpf.replace(/\D/g, '').length === 11
+            ? maskCPF(clientCpf)
+            : clientCpf || '-'
+        const phoneFormatted = clientPhone ? maskPhone(clientPhone) : '-'
+        window.api
+          .printSubscription({
             clientData: {
               name: clientName,
               cpf: cpfFormatted,
@@ -126,13 +128,15 @@ export default function ModalRenovar({
               expiryDate: result.newExpiry ?? ''
             }
           })
-          if (printRes && !printRes.success && onAlert) {
-            onAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
-          }
-        } catch (err) {
-          console.error('Erro ao imprimir recibo:', err)
-          if (onAlert) onAlert('Erro de impressão', friendlyError(err), 'error')
-        }
+          .then((printRes) => {
+            if (printRes && !printRes.success && onAlert) {
+              onAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+            }
+          })
+          .catch((err) => {
+            console.error('Erro ao imprimir recibo:', err)
+            if (onAlert) onAlert('Erro de impressão', friendlyError(err), 'error')
+          })
         onSuccess()
         onClose()
       } else {

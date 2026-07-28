@@ -132,27 +132,30 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
       const result = await checkoutTicketService({ id: checkoutTicket.id, paymentMethod })
       if (result.success) {
         const valorCobrado = result.valor ?? checkoutValor
-        // Exibe no modal o valor REALMENTE cobrado enquanto imprime.
         setCheckoutValor(valorCobrado)
         if (valorCobrado > 0 && checkoutTicket.tipo !== 'GARAGEM') {
-          try {
-            const saida = new Date().toISOString()
-            const minutos = differenceInMinutes(new Date(), new Date(checkoutTicket.entrada))
-            const tempoTotal = minutos < 60 ? `${minutos} min` : `${Math.floor(minutos / 60)}h ${minutos % 60}min`
-            const printRes = await printExit({
-              placa: checkoutTicket.placa,
-              entrada: checkoutTicket.entrada,
-              saida,
-              valor: valorCobrado,
-              tempoTotal
+          // Impressão NÃO bloqueia a saída: o ticket já foi finalizado e
+          // cobrado. O recibo sai em seguida; se a impressora falhar, o aviso
+          // chega depois — sem prender o operador na tela "Processando...".
+          const saida = new Date().toISOString()
+          const minutos = differenceInMinutes(new Date(), new Date(checkoutTicket.entrada))
+          const tempoTotal = minutos < 60 ? `${minutos} min` : `${Math.floor(minutos / 60)}h ${minutos % 60}min`
+          printExit({
+            placa: checkoutTicket.placa,
+            entrada: checkoutTicket.entrada,
+            saida,
+            valor: valorCobrado,
+            tempoTotal
+          })
+            .then((printRes) => {
+              if (printRes && !printRes.success) {
+                showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+              }
             })
-            if (printRes && !printRes.success) {
-              showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
-            }
-          } catch (err) {
-            console.error(err)
-            showAlert('Erro de impressão', friendlyError(err), 'error')
-          }
+            .catch((err) => {
+              console.error(err)
+              showAlert('Erro de impressão', friendlyError(err), 'error')
+            })
         }
         setModalOpen(false)
         setCheckoutTicket(null)
@@ -189,19 +192,24 @@ export default function Inicio({ setView }: InicioProps): React.JSX.Element {
       setSubscriptionInfo(null)
       setPlateWasInToday(null)
       if (typeToSave !== 'GARAGEM') {
-        try {
-          const printRes = await printEntry({
-            id: result.id!,
-            placa: plate.toUpperCase(),
-            entrada: result.entrada ?? new Date().toISOString()
+        // Impressão NÃO bloqueia o registro: o ticket já está salvo e a tela
+        // libera na hora. Se a impressora falhar (papel, cabo, desligada), o
+        // aviso chega logo depois — antes, a entrada ficava presa esperando o
+        // Windows responder e o app congelava no "REGISTRANDO...".
+        printEntry({
+          id: result.id!,
+          placa: plate.toUpperCase(),
+          entrada: result.entrada ?? new Date().toISOString()
+        })
+          .then((printRes) => {
+            if (printRes && !printRes.success) {
+              showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
+            }
           })
-          if (printRes && !printRes.success) {
-            showAlert('Erro de impressão', friendlyError(printRes.error ?? 'printer'), 'error')
-          }
-        } catch (err) {
-          console.error(err)
-          showAlert('Erro de impressão', friendlyError(err), 'error')
-        }
+          .catch((err) => {
+            console.error(err)
+            showAlert('Erro de impressão', friendlyError(err), 'error')
+          })
       }
       await reloadTickets()
       return
