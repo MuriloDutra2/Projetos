@@ -152,6 +152,38 @@ nenhuma poda ou compactação** (idempotente) — o custo é só uma vez, e o VA
 levou 135 ms mesmo em banco grande, rodando 15 s depois da abertura para não
 somar ao tempo de startup.
 
+## 13c — Impressora desligável (28/07/2026) — a causa que faltava
+
+**Vídeo de 28/07** mostrou o congelamento acontecendo **durante o "REGISTRANDO..."**
+(botão de entrada), com 48 veículos no pátio. Hipótese do cliente: como não usam mais a
+impressora, o Windows fica tentando alcançá-la e trava o app. **Confirmada no código e
+medida.**
+
+O fluxo de entrada faz `await printEntry(...)` antes de liberar a tela (`Inicio.tsx`), e o
+timeout de 30 s em `runPrint` **apenas rejeita a promessa — não cancela a chamada nativa**
+ao spooler já em andamento. Sem impressora conectada, é exatamente o quadro do vídeo.
+
+**Solução:** interruptor "Usar impressora térmica" em Configurações
+(`config.printingEnabled`, padrão ligado para não mudar quem usa a térmica). Desligado, o
+app **não toca a API de impressão em nenhum fluxo** — a checagem acontece dentro de
+`runPrint`, antes de qualquer contato, e `get-printers` também deixa de consultar o
+spooler (essa consulta trava do mesmo jeito).
+
+**Medido no app real (registro de entrada, do clique até a tela liberar):**
+
+| Impressão | Tempo | Alerta de erro |
+|---|---|---|
+| Ligada (máquina de teste, sem térmica) | **3.873 ms** | sim |
+| Desligada | **57 ms** | não |
+
+`getPrinters()` devolve lista vazia e `print-entry` responde `{success: true}` sem
+imprimir — nenhum alerta falso de erro para o operador.
+
+**Melhoria futura (não feita agora):** tornar a impressão não-bloqueante (disparar e seguir,
+mostrando eventual falha depois). Resolveria o congelamento mesmo com a impressora ligada
+e travada — mas muda o momento em que o operador vê o erro, então precisa de decisão da
+operação.
+
 ## Ordem sugerida e verificação
 
 | # | Item | Verificação |

@@ -87,6 +87,9 @@ const api = {
   getPrinterConfig: () => ipcRenderer.invoke('get-printer-config'),
   savePrinterConfig: (printerName: string) =>
     ipcRenderer.invoke('save-printer-config', printerName),
+  getPrintingEnabled: () => ipcRenderer.invoke('get-printing-enabled'),
+  setPrintingEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke('set-printing-enabled', enabled),
   toggleClientStatus: (data: { clientId: number; active: number }) =>
     ipcRenderer.invoke('toggle-client-status', data),
   deleteClient: (data: { clientId: number; password: string }) =>

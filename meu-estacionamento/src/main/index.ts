@@ -26,7 +26,7 @@ import icon from '../../resources/icon.png?asset'
 import { dbOperations, translateDbError } from './db'
 import { localDateStr } from './clientStatus'
 import { calcularValor, minutosGratisConsumidos, localDateKeyFromDate } from './calculations'
-import { printEntryTicket, printExitTicket, printSubscriptionReceipt, printShiftClosureReceipt, type ShiftClosureReceiptData } from './printer'
+import { printEntryTicket, printExitTicket, printSubscriptionReceipt, printShiftClosureReceipt, isPrintingEnabled, type ShiftClosureReceiptData } from './printer'
 import { currentShift, shiftLabel } from './shifts'
 import { getConfig, saveConfig } from './config'
 import { startSyncServer, stopSyncServer, getSyncServerInfo } from './syncServer'
@@ -726,6 +726,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-printers', async () => {
     try {
+      // Com a impressão desligada, nem consultar o spooler do Windows —
+      // essa consulta também pode ficar pendurada sem impressora conectada.
+      if (!isPrintingEnabled()) return []
       const w = mainWindow ?? BrowserWindow.getAllWindows()[0]
       if (!w?.webContents) return []
       const wc = w.webContents as any
@@ -745,6 +748,13 @@ app.whenReady().then(() => {
 
   ipcMain.handle('save-printer-config', (_event, printerName: string) => {
     saveConfig({ printerName: printerName || undefined })
+    return { success: true }
+  })
+
+  ipcMain.handle('get-printing-enabled', () => isPrintingEnabled())
+
+  ipcMain.handle('set-printing-enabled', (_event, enabled: boolean) => {
+    saveConfig({ printingEnabled: !!enabled })
     return { success: true }
   })
 
